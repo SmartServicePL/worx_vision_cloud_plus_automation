@@ -1,0 +1,57 @@
+# Worx Vision Cloud PLUS Automation
+
+Home Assistant automation blueprints for Worx Vision Cloud PLUS / Landroid Vision mowers.
+
+This repository is separated from the custom integration repository on purpose:
+
+- integration code lives in [`worx_vision_cloud_plus_github`](https://github.com/SmartServicePL/worx_vision_cloud_plus_github),
+- automations and blueprints live here.
+
+Prepared by **Smart Service**.
+
+## Import Blueprint
+
+[![Open your Home Assistant instance and import this blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSmartServicePL%2Fworx_vision_cloud_plus_automation%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fworx_vision_cloud_plus%2Fsmart_mowing_schedule.yaml)
+
+Manual import URL:
+
+```text
+https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml
+```
+
+## Smart Mowing Schedule
+
+The smart mowing blueprint estimates grass growth from temperature, rain, optional soil moisture and sunlight/UV data. It stores the estimated grass growth in an `input_number`, tracks the last full mowing cycle in an `input_datetime`, and starts the mower only when the lawn needs mowing.
+
+Before enabling this blueprint, disable the mowing schedule in the WORX app so Home Assistant is the only scheduler controlling mower starts.
+
+Documentation:
+
+- [Smart mowing setup](docs/smart-mowing-schedule.md)
+- [Optional helper package](docs/smart-mowing-helpers-package.yaml)
+
+Blueprint path:
+
+```text
+blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml
+```
+
+## Requirements
+
+- Home Assistant 2025.1.0 or newer.
+- Worx Vision Cloud PLUS integration installed from [`SmartServicePL/worx_vision_cloud_plus_github`](https://github.com/SmartServicePL/worx_vision_cloud_plus_github).
+- A `lawn_mower` entity for the mower.
+- Battery and rain entities from the integration.
+- Temperature, rain/weather and sunlight/UV sources from Home Assistant.
+- Optional soil moisture sensor.
+
+## Support
+
+If this project helps you, you can support Smart Service:
+
+[Donate via Revolut](https://revolut.me/smartserwis)
+
+## Privacy
+
+Do not publish Home Assistant storage files, access tokens, serial numbers, raw API responses or screenshots showing exact garden coordinates.
+

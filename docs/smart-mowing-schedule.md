@@ -65,7 +65,7 @@ That value is added to the `input_number` helper. At the configured start times,
 - estimated growth is above the mowing threshold,
 - the minimum number of days since the last full mow has passed.
 
-The next planned mowing helper is updated after the daily growth calculation. The planned time is the earliest primary or backup start slot where the estimated growth threshold and the minimum break between mowing cycles should be satisfied. After a full mowing cycle, the helper is moved forward again based on the reset growth estimate.
+The next planned mowing helper is updated after the daily growth calculation. The planned time is the earliest primary or backup start slot where the estimated growth threshold and the minimum break between mowing cycles should be satisfied. If the helper already contains a future mowing time, the daily calculation will not push that time later; it can only move it earlier when grass growth makes mowing necessary sooner, or replace it after the stored time has passed. After a full mowing cycle, the helper is moved forward again based on the reset growth estimate.
 
 Runtime is based on lawn size and real mower capacity:
 

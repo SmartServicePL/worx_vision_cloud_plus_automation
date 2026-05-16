@@ -3,6 +3,7 @@
 ## 0.1.2
 
 - Updated smart mowing documentation and blueprint labels for the renamed rain precipitation sensor.
+- Kept the next planned mowing helper stable during daily recalculation: future dates are no longer pushed later unless the stored date has passed.
 
 ## 0.1.1
 

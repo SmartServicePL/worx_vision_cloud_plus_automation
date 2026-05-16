@@ -505,6 +505,19 @@ variables:
     {% else %}
       {{ (as_timestamp(primary) + (days_ready * 86400)) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
     {% endif %}
+  stable_next_mow_datetime: >-
+    {% set calculated_ts = as_timestamp(next_mow_datetime) %}
+    {% set current_raw = states(next_mow_helper) %}
+    {% if current_raw in ['unknown', 'unavailable', 'none', ''] %}
+      {{ calculated_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+    {% else %}
+      {% set current_ts = as_timestamp(current_raw) %}
+      {% if current_ts <= as_timestamp(now()) or calculated_ts < current_ts %}
+        {{ calculated_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+      {% else %}
+        {{ current_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+      {% endif %}
+    {% endif %}
   next_mow_after_reset_datetime: >-
     {% set daily_growth = growth_today_mm | float %}
     {% if daily_growth <= 0.1 %}
@@ -539,7 +552,7 @@ actions:
                     target:
                       entity_id: "{{ next_mow_helper }}"
                     data:
-                      datetime: "{{ next_mow_datetime }}"
+                      datetime: "{{ stable_next_mow_datetime }}"
 
       - conditions:
           - condition: template

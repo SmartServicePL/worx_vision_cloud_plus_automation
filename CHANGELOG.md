@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Updated smart mowing documentation and blueprint labels for the renamed rain precipitation sensor.
+
 ## 0.1.1
 
 - Clarified that the smart mowing blueprint requires three Home Assistant helpers.

@@ -4,7 +4,7 @@
 
 `blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml` adds a dynamic Home Assistant automation for Worx Vision Cloud PLUS mowers.
 
-The blueprint does not rewrite the schedule stored in Worx Cloud. Instead, it creates a Home Assistant controlled schedule: it estimates grass growth once a day, stores that estimate in a helper, and starts the mower during one of two configured time windows only when the lawn actually needs cutting.
+The blueprint does not rewrite the schedule stored in Worx Cloud. Instead, it creates a Home Assistant controlled schedule: it estimates grass growth once a day, stores that estimate in a helper, stores the next planned mowing time in a second date/time helper, and starts the mower during one of two configured time windows only when the lawn actually needs cutting.
 
 Before enabling this automation, disable the mowing schedule in the WORX app. If both schedules stay active, the app and Home Assistant can start the mower independently, which makes the calculated growth estimate and next-mow time unreliable.
 
@@ -40,13 +40,13 @@ If no soil moisture sensor is selected, the blueprint estimates a virtual soil m
 
 ## Required helpers
 
-Create these helpers in Home Assistant before creating the automation from the blueprint:
+Create these three helpers in Home Assistant before creating the automation from the blueprint:
 
-- `input_number` - estimated grass growth in `mm`, range `0-40`, step `0.1`.
-- `input_datetime` - date and time of the last full mowing cycle.
-- `input_datetime` - next planned mowing time. This one is optional, but recommended if you want to show the next calculated mowing slot on a dashboard.
+- `input_number` - estimated grass growth in `mm`, range `0-40`, step `0.1`, for example `input_number.worx_estimated_grass_growth_mm`.
+- `input_datetime` - date and time of the last full mowing cycle, for example `input_datetime.worx_last_full_mow`.
+- `input_datetime` - next planned mowing time, for example `input_datetime.worx_next_planned_mow`.
 
-There is an optional package example in `docs/smart-mowing-helpers-package.yaml`.
+There is a package example in `docs/smart-mowing-helpers-package.yaml` with all three helpers.
 
 ## How the schedule is chosen
 
@@ -65,7 +65,7 @@ That value is added to the `input_number` helper. At the configured start times,
 - estimated growth is above the mowing threshold,
 - the minimum number of days since the last full mow has passed.
 
-If the optional next mowing helper is selected, the automation updates it after the daily growth calculation. The planned time is the earliest primary or backup start slot where the estimated growth threshold and the minimum break between mowing cycles should be satisfied. After a full mowing cycle, the helper is moved forward again based on the reset growth estimate.
+The next planned mowing helper is updated after the daily growth calculation. The planned time is the earliest primary or backup start slot where the estimated growth threshold and the minimum break between mowing cycles should be satisfied. After a full mowing cycle, the helper is moved forward again based on the reset growth estimate.
 
 Runtime is based on lawn size and real mower capacity:
 

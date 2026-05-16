@@ -21,14 +21,20 @@ https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/bl
 
 ## Smart Mowing Schedule
 
-The smart mowing blueprint estimates grass growth from temperature, rain, optional soil moisture and sunlight/UV data. It stores the estimated grass growth in an `input_number`, tracks the last full mowing cycle in an `input_datetime`, and starts the mower only when the lawn needs mowing.
+The smart mowing blueprint estimates grass growth from temperature, rain, optional soil moisture and sunlight/UV data. It stores the estimated grass growth in an `input_number`, tracks the last full mowing cycle in an `input_datetime`, stores the next planned mowing time in another `input_datetime`, and starts the mower only when the lawn needs mowing.
 
 Before enabling this blueprint, disable the mowing schedule in the WORX app so Home Assistant is the only scheduler controlling mower starts.
+
+Before creating the automation from the blueprint, create three Home Assistant helpers:
+
+- `input_number` for estimated grass growth, for example `input_number.worx_estimated_grass_growth_mm`.
+- `input_datetime` for the last full mowing cycle, for example `input_datetime.worx_last_full_mow`.
+- `input_datetime` for the next planned mowing time, for example `input_datetime.worx_next_planned_mow`.
 
 Documentation:
 
 - [Smart mowing setup](docs/smart-mowing-schedule.md)
-- [Optional helper package](docs/smart-mowing-helpers-package.yaml)
+- [Helper package example](docs/smart-mowing-helpers-package.yaml)
 
 Blueprint path:
 
@@ -43,6 +49,7 @@ blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml
 - A `lawn_mower` entity for the mower.
 - Battery and rain entities from the integration.
 - Temperature, rain/weather and sunlight/UV sources from Home Assistant.
+- Three helpers: estimated grass growth, last full mowing, next planned mowing.
 - Optional soil moisture sensor.
 
 ## Support
@@ -54,4 +61,3 @@ If this project helps you, you can support Smart Service:
 ## Privacy
 
 Do not publish Home Assistant storage files, access tokens, serial numbers, raw API responses or screenshots showing exact garden coordinates.
-

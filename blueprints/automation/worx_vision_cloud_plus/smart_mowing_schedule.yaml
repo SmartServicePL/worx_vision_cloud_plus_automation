@@ -3,9 +3,12 @@ blueprint:
   description: >
     Dynamiczny harmonogram dla kosiarki Worx Vision Cloud PLUS. Szablon liczy
     dzienny przyrost trawy z temperatury, opadu, wilgotnosci gleby i
-    naslonecznienia, zapisuje skumulowany przyrost w helperze input_number, a
-    potem dobiera czas koszenia na podstawie metrazu trawnika i wydajnosci
-    kosiarki. Przed uzyciem wylacz harmonogram koszenia w aplikacji WORX, zeby
+    naslonecznienia, zapisuje skumulowany przyrost w helperze input_number,
+    zapisuje ostatnie i nastepne koszenie w helperach input_datetime, a potem
+    dobiera czas koszenia na podstawie metrazu trawnika i wydajnosci kosiarki.
+    Przed utworzeniem automatyzacji przygotuj 3 helpery: przyrost trawy,
+    ostatnie koszenie oraz nastepne planowane koszenie. Przed uzyciem wylacz
+    harmonogram koszenia w aplikacji WORX, zeby
     aplikacja i Home Assistant nie uruchamialy kosiarki niezaleznie od siebie.
   domain: automation
   author: Smart Service
@@ -82,8 +85,7 @@ blueprint:
             - domain: input_datetime
     next_mow_helper:
       name: Helper nastepnego planowanego koszenia
-      description: Opcjonalny input_datetime. Jesli wybierzesz helper, automatyzacja bedzie po obliczeniach wpisywac przewidywany termin nastepnego koszenia.
-      default: ""
+      description: Wymagany input_datetime, w ktorym automatyzacja zapisuje przewidywany termin nastepnego koszenia.
       selector:
         entity:
           filter:

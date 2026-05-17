@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5
+
+- Changed the smart mowing sequence so normal mowing starts only after the mower finishes edge cutting, returns to the dock and recharges to the configured battery level.
+- Added configurable post-edge battery target and maximum charge wait time.
+
 ## 0.1.4
 
 - Fixed the edge-cut-to-normal-mowing handoff so the automation no longer stops after the edge pass.

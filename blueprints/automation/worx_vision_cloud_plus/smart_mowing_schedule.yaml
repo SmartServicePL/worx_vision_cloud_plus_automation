@@ -7,7 +7,8 @@ blueprint:
     zapisuje ostatnie i nastepne koszenie w helperach input_datetime, a potem
     dobiera czas koszenia na podstawie metrazu trawnika i wydajnosci kosiarki.
     Kazdy zaplanowany start najpierw uruchamia przycinanie krawedzi, czeka az
-    kosiarka wroci do bazy albo pauzy, a potem uruchamia normalne koszenie.
+    kosiarka wroci do bazy albo pauzy, czeka na ponowne naladowanie baterii,
+    a potem uruchamia normalne koszenie.
     Przed utworzeniem automatyzacji przygotuj 3 helpery: przyrost trawy,
     ostatnie koszenie oraz nastepne planowane koszenie. Przed uzyciem wylacz
     harmonogram koszenia w aplikacji WORX, zeby
@@ -306,6 +307,28 @@ blueprint:
           step: 1
           unit_of_measurement: min
           mode: slider
+    post_edge_battery_percent:
+      name: Bateria wymagana po krawedziach
+      description: Po powrocie z przycinania krawedzi automatyzacja poczeka w bazie do tego poziomu baterii, zanim uruchomi normalne koszenie.
+      default: 100
+      selector:
+        number:
+          min: 50
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+    post_edge_charge_wait_hours:
+      name: Maksymalny czas ladowania po krawedziach
+      description: Ile godzin automatyzacja moze czekac na naladowanie baterii po przycinaniu krawedzi. Po przekroczeniu czasu nie resetuje przyrostu trawy.
+      default: 8
+      selector:
+        number:
+          min: 1
+          max: 24
+          step: 1
+          unit_of_measurement: h
+          mode: slider
     growth_update_time:
       name: Godzina przeliczenia przyrostu
       default: "05:30:00"
@@ -364,6 +387,8 @@ variables:
   edge_cut_timeout_minutes: !input edge_cut_timeout_minutes
   edge_cut_start_timeout_minutes: !input edge_cut_start_timeout_minutes
   mowing_start_confirm_timeout_minutes: !input mowing_start_confirm_timeout_minutes
+  post_edge_battery_percent: !input post_edge_battery_percent
+  post_edge_charge_wait_hours: !input post_edge_charge_wait_hours
   primary_start_time_value: !input primary_start_time
   backup_start_time_value: !input backup_start_time
   model_capacity_m2_per_hour: >-
@@ -683,6 +708,33 @@ actions:
           - condition: template
             alias: Przycinanie krawedzi zakonczone
             value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
+          - alias: Poczekaj po krawedziach na pelna baterie
+            repeat:
+              while:
+                - condition: template
+                  value_template: >-
+                    {{ states(mower_entity) in ['docked', 'paused']
+                       and is_state(rain_binary_sensor, 'off')
+                       and (states(battery_sensor) | float(0)) < (post_edge_battery_percent | float(100))
+                       and repeat.index <= ((post_edge_charge_wait_hours | int(8)) * 60) }}
+              sequence:
+                - delay: "00:01:00"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(rain_binary_sensor, 'on') }}"
+                sequence:
+                  - stop: Po przycinaniu krawedzi zaczal padac deszcz.
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(mower_entity) not in ['docked', 'paused'] }}"
+                sequence:
+                  - stop: Kosiarka opuscila baze podczas ladowania po krawedziach.
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (states(battery_sensor) | float(0)) < (post_edge_battery_percent | float(100)) }}"
+                sequence:
+                  - stop: Bateria nie osiagnela wymaganego poziomu po przycinaniu krawedzi.
           - delay:
               minutes: 2
             alias: Odczekaj po powrocie z krawedzi

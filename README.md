@@ -21,7 +21,7 @@ https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/bl
 
 ## Smart Mowing Schedule
 
-The smart mowing blueprint estimates grass growth from temperature, rain, optional soil moisture and sunlight/UV data. It stores the estimated grass growth in an `input_number`, tracks the last full mowing cycle in an `input_datetime`, stores the next planned mowing time in another `input_datetime`, and starts the mower only when the lawn needs mowing. Every planned smart mowing start first runs the Worx Vision Cloud PLUS edge cutting button, waits for the edge pass to finish, waits briefly after docking, and then starts normal mowing with a second start attempt if Home Assistant does not see the mower leave the dock.
+The smart mowing blueprint estimates grass growth from temperature, rain, optional soil moisture and sunlight/UV data. It stores the estimated grass growth in an `input_number`, tracks the last full mowing cycle in an `input_datetime`, stores the next planned mowing time in another `input_datetime`, and starts the mower only when the lawn needs mowing. Every planned smart mowing start first runs the Worx Vision Cloud PLUS edge cutting button, waits for the edge pass to finish, waits for the mower to recharge in the dock, and then starts normal mowing with a second start attempt if Home Assistant does not see the mower leave the dock.
 
 Before enabling this blueprint, disable the mowing schedule in the WORX app so Home Assistant is the only scheduler controlling mower starts.
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+
+- Required the Worx Vision Cloud PLUS edge cutting button in the smart mowing blueprint.
+- Every planned smart mowing start now runs an edge-only pass first, waits for it to finish, and then starts normal mowing.
+
 ## 0.1.2
 
 - Updated smart mowing documentation and blueprint labels for the renamed rain precipitation sensor.

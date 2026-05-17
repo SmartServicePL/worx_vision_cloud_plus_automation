@@ -4,13 +4,14 @@
 
 `blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml` adds a dynamic Home Assistant automation for Worx Vision Cloud PLUS mowers.
 
-The blueprint does not rewrite the schedule stored in Worx Cloud. Instead, it creates a Home Assistant controlled schedule: it estimates grass growth once a day, stores that estimate in a helper, stores the next planned mowing time in a second date/time helper, and starts the mower during one of two configured time windows only when the lawn actually needs cutting.
+The blueprint does not rewrite the schedule stored in Worx Cloud. Instead, it creates a Home Assistant controlled schedule: it estimates grass growth once a day, stores that estimate in a helper, stores the next planned mowing time in a second date/time helper, and starts the mower during one of two configured time windows only when the lawn actually needs cutting. Every planned start begins with on-demand edge cutting, then continues with normal mowing after the edge pass is complete.
 
 Before enabling this automation, disable the mowing schedule in the WORX app. If both schedules stay active, the app and Home Assistant can start the mower independently, which makes the calculated growth estimate and next-mow time unreliable.
 
 ## Required mower entities
 
 - `lawn_mower.<mower>_kosiarka` - mower control entity.
+- `button.<mower>_uruchom_przycinanie_krawedzi` - starts on-demand edge cutting.
 - `sensor.<mower>_bateria` - battery percentage.
 - `binary_sensor.<mower>_czujnik_opadow_deszczu` - rain precipitation sensor.
 
@@ -64,6 +65,8 @@ That value is added to the `input_number` helper. At the configured start times,
 - rainfall and soil moisture are below configured wet-lawn limits,
 - estimated growth is above the mowing threshold,
 - the minimum number of days since the last full mow has passed.
+
+When those conditions are met, the automation presses the edge cutting button first. It waits until the mower returns to `docked` or `paused`, then starts normal mowing for the calculated runtime. If rain starts during the edge pass, or if the edge pass does not finish before the configured timeout, the automation docks the mower and does not reset the growth helper.
 
 The next planned mowing helper is updated after the daily growth calculation. The planned time is the earliest primary or backup start slot where the estimated growth threshold and the minimum break between mowing cycles should be satisfied. If the helper already contains a future mowing time, the daily calculation will not push that time later; it can only move it earlier when grass growth makes mowing necessary sooner, or replace it after the stored time has passed. After a full mowing cycle, the helper is moved forward again based on the reset growth estimate.
 

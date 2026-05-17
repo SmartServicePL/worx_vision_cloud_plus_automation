@@ -6,6 +6,8 @@ blueprint:
     naslonecznienia, zapisuje skumulowany przyrost w helperze input_number,
     zapisuje ostatnie i nastepne koszenie w helperach input_datetime, a potem
     dobiera czas koszenia na podstawie metrazu trawnika i wydajnosci kosiarki.
+    Kazdy zaplanowany start najpierw uruchamia przycinanie krawedzi, czeka az
+    kosiarka wroci do bazy albo pauzy, a potem uruchamia normalne koszenie.
     Przed utworzeniem automatyzacji przygotuj 3 helpery: przyrost trawy,
     ostatnie koszenie oraz nastepne planowane koszenie. Przed uzyciem wylacz
     harmonogram koszenia w aplikacji WORX, zeby
@@ -23,6 +25,13 @@ blueprint:
         entity:
           filter:
             - domain: lawn_mower
+    edge_cut_button:
+      name: Uruchom przycinanie krawedzi
+      description: Przycisk z integracji Worx Vision Cloud PLUS. Automatyzacja naciska go przed kazdym planowanym koszeniem, czeka na zakonczenie przejazdu krawedzi, a potem uruchamia normalne koszenie.
+      selector:
+        entity:
+          filter:
+            - domain: button
     battery_sensor:
       name: Bateria kosiarki
       description: Sensor procentu baterii kosiarki.
@@ -264,6 +273,17 @@ blueprint:
           step: 15
           unit_of_measurement: min
           mode: slider
+    edge_cut_timeout_minutes:
+      name: Maksymalny czas przycinania krawedzi
+      description: Ile minut automatyzacja czeka na zakonczenie przejazdu krawedzi przed normalnym koszeniem.
+      default: 60
+      selector:
+        number:
+          min: 10
+          max: 180
+          step: 5
+          unit_of_measurement: min
+          mode: slider
     growth_update_time:
       name: Godzina przeliczenia przyrostu
       default: "05:30:00"
@@ -297,6 +317,7 @@ triggers:
 
 variables:
   mower_entity: !input mower_entity
+  edge_cut_button: !input edge_cut_button
   battery_sensor: !input battery_sensor
   rain_binary_sensor: !input rain_binary_sensor
   temperature_source_entity: !input temperature_source_entity
@@ -318,6 +339,7 @@ variables:
   max_soil_moisture_percent: !input max_soil_moisture_percent
   min_runtime_minutes: !input min_runtime_minutes
   max_runtime_minutes: !input max_runtime_minutes
+  edge_cut_timeout_minutes: !input edge_cut_timeout_minutes
   primary_start_time_value: !input primary_start_time
   backup_start_time_value: !input backup_start_time
   model_capacity_m2_per_hour: >-
@@ -579,6 +601,54 @@ actions:
           - condition: template
             alias: Zachowana minimalna przerwa
             value_template: "{{ (last_mow_days_ago | float) >= (min_days_between_mows | float) }}"
+          - action: button.press
+            alias: Uruchom przycinanie krawedzi
+            target:
+              entity_id: !input edge_cut_button
+          - wait_template: "{{ states(mower_entity) not in ['docked', 'paused'] }}"
+            alias: Poczekaj az kosiarka rozpocznie przejazd krawedzi
+            timeout:
+              minutes: 2
+            continue_on_timeout: true
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(mower_entity) not in ['docked', 'paused'] }}"
+                sequence:
+                  - wait_for_trigger:
+                      - trigger: state
+                        entity_id: !input rain_binary_sensor
+                        to: "on"
+                      - trigger: state
+                        entity_id: !input mower_entity
+                        to: "docked"
+                      - trigger: state
+                        entity_id: !input mower_entity
+                        to: "paused"
+                    alias: Poczekaj na zakonczenie przycinania krawedzi
+                    timeout:
+                      minutes: "{{ edge_cut_timeout_minutes }}"
+                    continue_on_timeout: true
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ is_state(rain_binary_sensor, 'on') }}"
+                        sequence:
+                          - action: lawn_mower.dock
+                            target:
+                              entity_id: !input mower_entity
+                          - stop: Przycinanie krawedzi przerwane przez deszcz.
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ states(mower_entity) not in ['docked', 'paused'] }}"
+                        sequence:
+                          - action: lawn_mower.dock
+                            target:
+                              entity_id: !input mower_entity
+                          - stop: Przycinanie krawedzi nie zakonczylo sie przed limitem czasu.
+          - condition: template
+            alias: Przycinanie krawedzi zakonczone
+            value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
           - action: lawn_mower.start_mowing
             target:
               entity_id: !input mower_entity

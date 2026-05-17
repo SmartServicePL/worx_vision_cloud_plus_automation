@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+- Fixed the edge-cut-to-normal-mowing handoff so the automation no longer stops after the edge pass.
+- Replaced dynamic wait timeouts with explicit polling loops for better Home Assistant compatibility.
+- Added confirmation waits and a second start attempt before treating normal mowing as failed.
+
 ## 0.1.3
 
 - Required the Worx Vision Cloud PLUS edge cutting button in the smart mowing blueprint.

@@ -284,6 +284,28 @@ blueprint:
           step: 5
           unit_of_measurement: min
           mode: slider
+    edge_cut_start_timeout_minutes:
+      name: Maksymalny czas oczekiwania na start krawedzi
+      description: Ile minut automatyzacja czeka, az Worx Cloud potwierdzi wyjazd kosiarki po nacisnieciu przycinania krawedzi.
+      default: 10
+      selector:
+        number:
+          min: 2
+          max: 30
+          step: 1
+          unit_of_measurement: min
+          mode: slider
+    mowing_start_confirm_timeout_minutes:
+      name: Maksymalny czas potwierdzenia normalnego koszenia
+      description: Ile minut automatyzacja czeka, az kosiarka wyjedzie po komendzie normalnego koszenia. Jesli nie wyjedzie, komenda zostanie wyslana drugi raz.
+      default: 5
+      selector:
+        number:
+          min: 2
+          max: 20
+          step: 1
+          unit_of_measurement: min
+          mode: slider
     growth_update_time:
       name: Godzina przeliczenia przyrostu
       default: "05:30:00"
@@ -340,6 +362,8 @@ variables:
   min_runtime_minutes: !input min_runtime_minutes
   max_runtime_minutes: !input max_runtime_minutes
   edge_cut_timeout_minutes: !input edge_cut_timeout_minutes
+  edge_cut_start_timeout_minutes: !input edge_cut_start_timeout_minutes
+  mowing_start_confirm_timeout_minutes: !input mowing_start_confirm_timeout_minutes
   primary_start_time_value: !input primary_start_time
   backup_start_time_value: !input backup_start_time
   model_capacity_m2_per_hour: >-
@@ -605,60 +629,106 @@ actions:
             alias: Uruchom przycinanie krawedzi
             target:
               entity_id: !input edge_cut_button
-          - wait_template: "{{ states(mower_entity) not in ['docked', 'paused'] }}"
-            alias: Poczekaj az kosiarka rozpocznie przejazd krawedzi
-            timeout:
-              minutes: 2
-            continue_on_timeout: true
+          - alias: Poczekaj az Worx Cloud potwierdzi wyjazd do krawedzi
+            repeat:
+              while:
+                - condition: template
+                  value_template: >-
+                    {{ states(mower_entity) in ['docked', 'paused']
+                       and is_state(rain_binary_sensor, 'off')
+                       and repeat.index <= ((edge_cut_start_timeout_minutes | int(10)) * 6) }}
+              sequence:
+                - delay: "00:00:10"
           - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(rain_binary_sensor, 'on') }}"
+                sequence:
+                  - action: lawn_mower.dock
+                    target:
+                      entity_id: !input mower_entity
+                  - stop: Przycinanie krawedzi przerwane przez deszcz.
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
+                sequence:
+                  - stop: Nie potwierdzono startu przycinania krawedzi w limicie czasu.
+          - alias: Poczekaj na zakonczenie przycinania krawedzi
+            repeat:
+              while:
+                - condition: template
+                  value_template: >-
+                    {{ states(mower_entity) not in ['docked', 'paused']
+                       and is_state(rain_binary_sensor, 'off')
+                       and repeat.index <= ((edge_cut_timeout_minutes | int(60)) * 6) }}
+              sequence:
+                - delay: "00:00:10"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(rain_binary_sensor, 'on') }}"
+                sequence:
+                  - action: lawn_mower.dock
+                    target:
+                      entity_id: !input mower_entity
+                  - stop: Przycinanie krawedzi przerwane przez deszcz.
               - conditions:
                   - condition: template
                     value_template: "{{ states(mower_entity) not in ['docked', 'paused'] }}"
                 sequence:
-                  - wait_for_trigger:
-                      - trigger: state
-                        entity_id: !input rain_binary_sensor
-                        to: "on"
-                      - trigger: state
-                        entity_id: !input mower_entity
-                        to: "docked"
-                      - trigger: state
-                        entity_id: !input mower_entity
-                        to: "paused"
-                    alias: Poczekaj na zakonczenie przycinania krawedzi
-                    timeout:
-                      minutes: "{{ edge_cut_timeout_minutes }}"
-                    continue_on_timeout: true
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ is_state(rain_binary_sensor, 'on') }}"
-                        sequence:
-                          - action: lawn_mower.dock
-                            target:
-                              entity_id: !input mower_entity
-                          - stop: Przycinanie krawedzi przerwane przez deszcz.
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ states(mower_entity) not in ['docked', 'paused'] }}"
-                        sequence:
-                          - action: lawn_mower.dock
-                            target:
-                              entity_id: !input mower_entity
-                          - stop: Przycinanie krawedzi nie zakonczylo sie przed limitem czasu.
+                  - action: lawn_mower.dock
+                    target:
+                      entity_id: !input mower_entity
+                  - stop: Przycinanie krawedzi nie zakonczylo sie przed limitem czasu.
           - condition: template
             alias: Przycinanie krawedzi zakonczone
             value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
+          - delay:
+              minutes: 2
+            alias: Odczekaj po powrocie z krawedzi
           - action: lawn_mower.start_mowing
+            alias: Uruchom normalne koszenie
             target:
               entity_id: !input mower_entity
-          - wait_for_trigger:
-              - trigger: state
-                entity_id: !input rain_binary_sensor
-                to: "on"
-            timeout:
-              minutes: "{{ recommended_runtime_minutes }}"
-            continue_on_timeout: true
+          - alias: Poczekaj na potwierdzenie wyjazdu do normalnego koszenia
+            repeat:
+              while:
+                - condition: template
+                  value_template: >-
+                    {{ states(mower_entity) in ['docked', 'paused']
+                       and repeat.index <= ((mowing_start_confirm_timeout_minutes | int(5)) * 6) }}
+              sequence:
+                - delay: "00:00:10"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
+                sequence:
+                  - action: lawn_mower.start_mowing
+                    alias: Ponow normalne koszenie
+                    target:
+                      entity_id: !input mower_entity
+                  - alias: Poczekaj na potwierdzenie drugiego startu koszenia
+                    repeat:
+                      while:
+                        - condition: template
+                          value_template: >-
+                            {{ states(mower_entity) in ['docked', 'paused']
+                               and repeat.index <= ((mowing_start_confirm_timeout_minutes | int(5)) * 6) }}
+                      sequence:
+                        - delay: "00:00:10"
+          - condition: template
+            alias: Normalne koszenie rozpoczete
+            value_template: "{{ states(mower_entity) not in ['docked', 'paused'] }}"
+          - alias: Koszenie przez wyliczony czas albo do deszczu
+            repeat:
+              while:
+                - condition: template
+                  value_template: >-
+                    {{ is_state(rain_binary_sensor, 'off')
+                       and repeat.index <= (recommended_runtime_minutes | int(60)) }}
+              sequence:
+                - delay: "00:01:00"
           - choose:
               - conditions:
                   - condition: template
@@ -670,7 +740,7 @@ actions:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ wait.trigger is none }}"
+                    value_template: "{{ is_state(rain_binary_sensor, 'off') }}"
                 sequence:
                   - action: input_datetime.set_datetime
                     target:

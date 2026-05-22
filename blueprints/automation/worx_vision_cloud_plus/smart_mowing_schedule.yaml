@@ -578,17 +578,7 @@ variables:
     {% endif %}
   stable_next_mow_datetime: >-
     {% set calculated_ts = as_timestamp(next_mow_datetime) %}
-    {% set current_raw = states(next_mow_helper) %}
-    {% if current_raw in ['unknown', 'unavailable', 'none', ''] %}
-      {{ calculated_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
-    {% else %}
-      {% set current_ts = as_timestamp(current_raw) %}
-      {% if current_ts <= as_timestamp(now()) or calculated_ts < current_ts %}
-        {{ calculated_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
-      {% else %}
-        {{ current_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
-      {% endif %}
-    {% endif %}
+    {{ calculated_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
   next_mow_after_reset_datetime: >-
     {% set daily_growth = growth_today_mm | float %}
     {% if daily_growth <= 0.1 %}
@@ -629,6 +619,26 @@ actions:
           - condition: template
             value_template: "{{ trigger.id in ['start_primary', 'start_backup'] }}"
         sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    alias: Trawa albo minimalna przerwa nie pozwala jeszcze kosic
+                    value_template: >-
+                      {{ (estimated_growth_mm | float) < (growth_threshold_mm | float)
+                         or (last_mow_days_ago | float) < (min_days_between_mows | float) }}
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            alias: Przesun nastepne koszenie
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ next_mow_datetime }}"
+                  - stop: Warunki koszenia nie sa jeszcze spelnione; przesunieto nastepne koszenie.
           - condition: template
             alias: Kosiarka musi byc w bazie albo pauzie
             value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"

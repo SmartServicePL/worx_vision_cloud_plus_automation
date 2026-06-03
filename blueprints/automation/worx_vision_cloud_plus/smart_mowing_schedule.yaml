@@ -200,6 +200,23 @@ blueprint:
           step: 0.5
           unit_of_measurement: mm
           mode: slider
+    automatic_irrigation_enabled:
+      name: Automatyczne nawadnianie
+      description: Wlacz, jesli trawnik jest regularnie podlewany automatycznie. Nie trzeba wybierac sekcji podlewania ani switchy.
+      default: false
+      selector:
+        boolean:
+    irrigation_growth_adjustment_percent:
+      name: Korekta wzrostu przy nawadnianiu
+      description: Uzywane tylko przy wlaczonym automatycznym nawadnianiu. 100% oznacza bez zmiany, 140% oznacza szybszy wzrost o 40%.
+      default: 140
+      selector:
+        number:
+          min: 100
+          max: 220
+          step: 5
+          unit_of_measurement: "%"
+          mode: slider
     high_growth_threshold_mm:
       name: Prog intensywnego koszenia
       description: Po przekroczeniu tej wartosci harmonogram wydluza pojedynczy cykl.
@@ -377,6 +394,8 @@ variables:
   manual_mower_capacity_m2_per_hour: !input mower_capacity_m2_per_hour
   model_capacity_adjustment_percent: !input model_capacity_adjustment_percent
   growth_threshold_mm: !input growth_threshold_mm
+  automatic_irrigation_enabled: !input automatic_irrigation_enabled
+  irrigation_growth_adjustment_percent: !input irrigation_growth_adjustment_percent
   high_growth_threshold_mm: !input high_growth_threshold_mm
   min_days_between_mows: !input min_days_between_mows
   min_battery_percent: !input min_battery_percent
@@ -501,6 +520,9 @@ variables:
     {% elif r < 25 %}0.85
     {% else %}0.55
     {% endif %}
+  effective_rain_factor: >-
+    {% set factor = rain_factor | float %}
+    {% if automatic_irrigation_enabled and factor < 0.85 %}0.85{% else %}{{ factor }}{% endif %}
   soil_factor: >-
     {% set s = soil_moisture | float %}
     {% if s < 20 %}0.45
@@ -509,6 +531,9 @@ variables:
     {% elif s <= 80 %}0.85
     {% else %}0.55
     {% endif %}
+  effective_soil_factor: >-
+    {% set factor = soil_factor | float %}
+    {% if automatic_irrigation_enabled and factor < 0.85 %}0.85{% else %}{{ factor }}{% endif %}
   sunlight_factor: >-
     {% set u = sunlight_index | float %}
     {% if u < 1 %}0.35
@@ -523,8 +548,14 @@ variables:
     {% elif m in [4, 10] %}0.65
     {% else %}1
     {% endif %}
+  irrigation_growth_factor: >-
+    {% if automatic_irrigation_enabled %}
+      {{ ((irrigation_growth_adjustment_percent | float(140)) / 100) | round(2) }}
+    {% else %}
+      1
+    {% endif %}
   growth_today_mm: >-
-    {% set raw = 4.5 * (temp_factor | float) * (rain_factor | float) * (soil_factor | float) * (sunlight_factor | float) * (season_factor | float) %}
+    {% set raw = 4.5 * (temp_factor | float) * (effective_rain_factor | float) * (effective_soil_factor | float) * (sunlight_factor | float) * (season_factor | float) * (irrigation_growth_factor | float) %}
     {% if raw < 0 %}0{% elif raw > 7 %}7{% else %}{{ raw | round(1) }}{% endif %}
   new_growth_mm: >-
     {% set raw = (estimated_growth_mm | float) + (growth_today_mm | float) %}

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a simple automatic-irrigation growth correction for regularly watered lawns.
 - Fixed the next planned mowing helper so daily recalculation can postpone a stored future time when the grass growth threshold or minimum mowing gap is not ready yet.
 - When a primary or backup start fires before mowing is required, the automation now updates the next planned mowing helper and stops without leaving a stale missed start time.
 

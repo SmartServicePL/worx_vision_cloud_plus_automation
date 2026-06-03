@@ -28,6 +28,8 @@ The growth estimate needs these external Home Assistant sources:
 
 The calculation is intentionally conservative. Grass growth is strongest when temperature, soil moisture, recent rainfall and light are all in a useful range. Winter months almost stop the estimate, spring and autumn reduce it, and the main growing season uses the full multiplier.
 
+If the lawn has automatic irrigation, enable **Automatyczne nawadnianie** in the blueprint. No irrigation switch or section list is needed. The blueprint then treats the lawn as regularly watered and applies the **Korekta wzrostu przy nawadnianiu** percentage, for example `140%` when irrigated grass grows clearly faster than the weather-only estimate.
+
 Recommended sources:
 
 - Outdoor weather station for temperature.
@@ -54,7 +56,7 @@ There is a package example in `docs/smart-mowing-helpers-package.yaml` with all 
 Every morning the blueprint calculates `growth_today_mm`:
 
 ```text
-4.5 mm * temperature factor * rain factor * soil moisture factor * sunlight factor * season factor
+4.5 mm * temperature factor * water factor * soil moisture factor * sunlight factor * season factor * optional irrigation correction
 ```
 
 That value is added to the `input_number` helper. At the configured start times, the automation starts mowing only when:
@@ -94,6 +96,7 @@ Good first values for most gardens:
 - Mower model: select your WORX model, then leave model correction at `100%` for the first week.
 - Start threshold: `8 mm`.
 - Intensive threshold: `14 mm`.
+- Automatic irrigation: enable only for regularly watered lawns, start with `130-150%`.
 - Minimum break: `1 day`.
 - Maximum rain in 24 h: `3 mm`.
 - Maximum soil moisture: `70-75%`.

@@ -1,23 +1,38 @@
 blueprint:
   name: Worx Vision Cloud PLUS - inteligentny harmonogram koszenia
-  description: >
-    Dynamiczny harmonogram dla kosiarki Worx Vision Cloud PLUS. Szablon liczy
-    dzienny przyrost trawy z temperatury, opadu, wilgotnosci gleby i
-    naslonecznienia, zapisuje skumulowany przyrost w helperze input_number,
-    zapisuje ostatnie i nastepne koszenie w helperach input_datetime, a potem
-    dobiera czas koszenia na podstawie metrazu trawnika i wydajnosci kosiarki.
-    W trybie automatycznym dobiera najblizsza sensowna godzine startu w
-    wybranym oknie czasowym. Jezeli jako zrodlo opadu wybrano encje weather,
-    do wyboru godziny uzywa prognozy godzinowej. W trybie stalej godziny
-    dziala jak klasyczny harmonogram z glowna godzina i druga proba.
-    Kazdy zaplanowany start najpierw uruchamia przycinanie krawedzi, czeka az
-    kosiarka wroci do bazy albo pauzy, czeka na ponowne naladowanie baterii,
-    a potem uruchamia normalne koszenie. Po zaplanowaniu, odlozeniu,
-    przerwaniu albo zakonczeniu tworzy powiadomienie w Home Assistant.
-    Przed utworzeniem automatyzacji przygotuj 3 helpery: przyrost trawy,
-    ostatnie koszenie oraz nastepne planowane koszenie. Przed uzyciem wylacz
-    harmonogram koszenia w aplikacji WORX, zeby
-    aplikacja i Home Assistant nie uruchamialy kosiarki niezaleznie od siebie.
+  description: |
+    Inteligentny harmonogram koszenia dla robotow Worx Vision Cloud PLUS.
+
+    Co robi automatyzacja:
+    - codziennie szacuje, ile urosla trawa,
+    - bierze pod uwage temperature, opady, wilgotnosc gleby, UV/slonce,
+      podlewanie i nawozenie,
+    - zapisuje przyrost trawy, ostatnie koszenie i nastepny planowany termin
+      w helperach Home Assistant,
+    - dobiera czas pracy do powierzchni trawnika i modelu kosiarki.
+
+    Jak wybierany jest termin koszenia:
+    - w trybie automatycznym automatyzacja szuka najlepszej godziny w wybranym
+      oknie czasowym,
+    - jesli wybrano encje weather, uzywana jest prognoza godzinowa,
+    - w trybie stalej godziny automatyzacja korzysta z ustawionego startu
+      i drugiej proby.
+
+    Jak wyglada cykl koszenia:
+    - najpierw uruchamia sie przycinanie krawedzi,
+    - robot wraca do bazy albo pauzy,
+    - automatyzacja czeka na ponowne naladowanie baterii,
+    - dopiero potem uruchamia sie normalne koszenie trawnika.
+
+    Powiadomienia:
+    - Home Assistant informuje, kiedy koszenie zostalo zaplanowane,
+    - pokazuje powod, gdy koszenie zostalo odlozone,
+    - informuje o starcie, przerwaniu albo zakonczeniu koszenia.
+
+    Przed uzyciem:
+    - przygotuj 3 helpery: przyrost trawy, ostatnie koszenie i nastepne koszenie,
+    - wylacz harmonogram w aplikacji WORX, zeby aplikacja i Home Assistant
+      nie uruchamialy kosiarki niezaleznie od siebie.
   domain: automation
   author: Smart Service
   homeassistant:

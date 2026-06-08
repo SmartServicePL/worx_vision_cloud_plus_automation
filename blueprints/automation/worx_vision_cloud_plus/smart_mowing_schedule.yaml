@@ -40,7 +40,7 @@ blueprint:
   source_url: https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml
   input:
     mower_section:
-      name: 1. Kosiarka
+      name: Kosiarka
       icon: mdi:robot-mower
       input:
         mower_entity:
@@ -72,7 +72,7 @@ blueprint:
               filter:
                 - domain: binary_sensor
     weather_section:
-      name: 2. Pogoda
+      name: Pogoda
       icon: mdi:weather-partly-rainy
       input:
         temperature_source_entity:
@@ -108,7 +108,7 @@ blueprint:
               filter:
                 - domain: sensor
     helpers_section:
-      name: 3. Helpery
+      name: Helpery
       icon: mdi:database-clock
       input:
         growth_helper:
@@ -133,7 +133,7 @@ blueprint:
               filter:
                 - domain: input_datetime
     simple_settings_section:
-      name: 4. Proste ustawienia
+      name: Proste ustawienia
       icon: mdi:tune-variant
       input:
         mower_model:

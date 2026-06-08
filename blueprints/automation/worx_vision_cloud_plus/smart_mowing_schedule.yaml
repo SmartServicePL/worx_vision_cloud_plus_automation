@@ -6,9 +6,14 @@ blueprint:
     naslonecznienia, zapisuje skumulowany przyrost w helperze input_number,
     zapisuje ostatnie i nastepne koszenie w helperach input_datetime, a potem
     dobiera czas koszenia na podstawie metrazu trawnika i wydajnosci kosiarki.
+    W trybie automatycznym dobiera najblizsza sensowna godzine startu w
+    wybranym oknie czasowym. Jezeli jako zrodlo opadu wybrano encje weather,
+    do wyboru godziny uzywa prognozy godzinowej. W trybie stalej godziny
+    dziala jak klasyczny harmonogram z glowna godzina i druga proba.
     Kazdy zaplanowany start najpierw uruchamia przycinanie krawedzi, czeka az
     kosiarka wroci do bazy albo pauzy, czeka na ponowne naladowanie baterii,
-    a potem uruchamia normalne koszenie.
+    a potem uruchamia normalne koszenie. Po zaplanowaniu, odlozeniu,
+    przerwaniu albo zakonczeniu tworzy powiadomienie w Home Assistant.
     Przed utworzeniem automatyzacji przygotuj 3 helpery: przyrost trawy,
     ostatnie koszenie oraz nastepne planowane koszenie. Przed uzyciem wylacz
     harmonogram koszenia w aplikacji WORX, zeby
@@ -19,349 +24,410 @@ blueprint:
     min_version: 2025.1.0
   source_url: https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml
   input:
-    mower_entity:
-      name: Kosiarka
-      description: Encja lawn_mower z integracji Worx Vision Cloud PLUS.
-      selector:
-        entity:
-          filter:
-            - domain: lawn_mower
-    edge_cut_button:
-      name: Uruchom przycinanie krawedzi
-      description: Przycisk z integracji Worx Vision Cloud PLUS. Automatyzacja naciska go przed kazdym planowanym koszeniem, czeka na zakonczenie przejazdu krawedzi, a potem uruchamia normalne koszenie.
-      selector:
-        entity:
-          filter:
-            - domain: button
-    battery_sensor:
-      name: Bateria kosiarki
-      description: Sensor procentu baterii kosiarki.
-      selector:
-        entity:
-          filter:
-            - domain: sensor
-    rain_binary_sensor:
-      name: Czujnik opadow deszczu kosiarki
-      description: Binary sensor opadow deszczu, uzywany do blokady startu i powrotu do bazy w trakcie deszczu.
-      selector:
-        entity:
-          filter:
-            - domain: binary_sensor
-    temperature_source_entity:
-      name: Temperatura ogrodu albo encja pogody
-      description: Wybierz zwykly czujnik temperatury zewnetrznej, sensor statystyczny sredniej 24 h albo encje weather z atrybutem temperature.
-      selector:
-        entity:
-          filter:
-            - domain: sensor
-            - domain: weather
-    rain_source_entity:
-      name: Opad albo encja pogody
-      description: Wybierz sensor opadu w mm, sensor sumy 24 h albo encje weather. Dla weather szablon uzyje atrybutu precipitation, a gdy go nie ma, warunku pogody jako przyblizenia.
-      selector:
-        entity:
-          filter:
-            - domain: sensor
-            - domain: weather
-    soil_moisture_sensor:
-      name: Wilgotnosc gleby opcjonalnie
-      description: Opcjonalny sensor wilgotnosci gleby w procentach. Jesli zostawisz puste, szablon policzy wirtualna wilgotnosc z opadu, temperatury, naslonecznienia i pory roku.
-      default: ""
-      selector:
-        entity:
-          filter:
-            - domain: sensor
-    sunlight_source_entity:
-      name: Naslonecznienie, UV albo encja pogody
-      description: Wybierz sensor UV/naslonecznienia w skali 0-10 albo encje weather z atrybutem uv_index.
-      selector:
-        entity:
-          filter:
-            - domain: sensor
-            - domain: weather
-    growth_helper:
-      name: Helper skumulowanego przyrostu
-      description: input_number przechowujacy szacowany przyrost trawy w mm od ostatniego pelnego koszenia.
-      selector:
-        entity:
-          filter:
-            - domain: input_number
-    last_mow_helper:
-      name: Helper ostatniego koszenia
-      description: input_datetime aktualizowany po pelnym cyklu koszenia.
-      selector:
-        entity:
-          filter:
-            - domain: input_datetime
-    next_mow_helper:
-      name: Helper nastepnego planowanego koszenia
-      description: Wymagany input_datetime, w ktorym automatyzacja zapisuje przewidywany termin nastepnego koszenia.
-      selector:
-        entity:
-          filter:
-            - domain: input_datetime
-    mower_model:
-      name: Model kosiarki WORX
-      description: Wybierz model WORX Vision / Vision Cloud. Szablon dobierze robocza wydajnosc koszenia na podstawie maksymalnej powierzchni i szerokosci koszenia modelu. Dla innego modelu wybierz tryb reczny.
-      default: custom
-      selector:
-        select:
-          mode: dropdown
-          options:
-            - label: Recznie / inny model
-              value: custom
-            - label: Vision AI S250 WR202E - 250 m2
-              value: wr202e_250
-            - label: Vision AI M600 WR206E - 600 m2
-              value: wr206e_600
-            - label: Vision AI M800 WR208E - 800 m2
-              value: wr208e_800
-            - label: Vision AI L1300 WR213E - 1300 m2
-              value: wr213e_1300
-            - label: Vision AI L1600 WR216E - 1600 m2
-              value: wr216e_1600
-            - label: Vision AI WR220 - 1/2 acre
-              value: wr220_2023
-            - label: Vision Cloud 300 WR303E - 300 m2
-              value: wr303e_300
-            - label: Vision Cloud 500 WR305E - 500 m2
-              value: wr305e_500
-            - label: Vision Cloud 650 WR365E - 650 m2
-              value: wr365e_650
-            - label: Vision Cloud 650 WR365E.1 Cut-to-Zero - 650 m2
-              value: wr365e1_650
-            - label: Vision Cloud 800 WR308E - 800 m2
-              value: wr308e_800
-            - label: Vision Cloud 1200 WR312E - 1200 m2
-              value: wr312e_1200
-            - label: Vision Cloud 1800 WR318E - 1800 m2
-              value: wr318e_1800
-            - label: Vision Cloud 3000 WR330E - 3000 m2
-              value: wr330e_3000
-            - label: Vision Cloud 1/4 acre WR310/WR310.1
-              value: wr310_1012
-            - label: Vision Cloud 1/2 acre WR320/WR320.1
-              value: wr320_2023
-            - label: Vision Cloud 1 acre WR340
-              value: wr340_us_4047
-            - label: Vision Cloud 4WD 600 WR340E - 600 m2
-              value: wr340e_600
-            - label: Vision Cloud 4WD 1000 WR341E - 1000 m2
-              value: wr341e_1000
-            - label: Vision Cloud 4WD 2000 WR342E - 2000 m2
-              value: wr342e_2000
-            - label: Vision Cloud 4WD 4000 WR344E - 4000 m2
-              value: wr344e_4000
-            - label: Vision Cloud 4WD 1/4 acre WR341/WR341.1
-              value: wr341_us_1012
-            - label: Vision Cloud 4WD 1 acre WR344
-              value: wr344_us_4047
-    lawn_area_m2:
-      name: Powierzchnia trawnika
-      description: Powierzchnia robocza trawnika w metrach kwadratowych.
-      default: 500
-      selector:
-        number:
-          min: 20
-          max: 5000
-          step: 10
-          unit_of_measurement: m2
-          mode: box
-    mower_capacity_m2_per_hour:
-      name: Reczna wydajnosc kosiarki
-      description: Uzywane tylko dla modelu "Recznie / inny model". Ile m2 kosiarka zwykle obsluguje w godzine w Twoim ogrodzie.
-      default: 80
-      selector:
-        number:
-          min: 20
-          max: 250
-          step: 5
-          unit_of_measurement: m2/h
-          mode: slider
-    model_capacity_adjustment_percent:
-      name: Korekta wydajnosci modelu
-      description: Korekta dla Twojego ogrodu. Zmniejsz przy waskich przejazdach, wielu strefach lub przeszkodach; zwieksz przy prostym, otwartym trawniku.
-      default: 100
-      selector:
-        number:
-          min: 50
-          max: 150
-          step: 5
-          unit_of_measurement: "%"
-          mode: slider
-    growth_threshold_mm:
-      name: Prog startu koszenia
-      description: Szacowany przyrost trawy w mm od ostatniego koszenia, po ktorym kosiarka moze wystartowac.
-      default: 8
-      selector:
-        number:
-          min: 2
-          max: 25
-          step: 0.5
-          unit_of_measurement: mm
-          mode: slider
-    automatic_irrigation_enabled:
-      name: Automatyczne nawadnianie
-      description: Wlacz, jesli trawnik jest regularnie podlewany automatycznie. Nie trzeba wybierac sekcji podlewania ani switchy.
-      default: false
-      selector:
-        boolean:
-    irrigation_growth_adjustment_percent:
-      name: Korekta wzrostu przy nawadnianiu
-      description: Uzywane tylko przy wlaczonym automatycznym nawadnianiu. 100% oznacza bez zmiany, 140% oznacza szybszy wzrost o 40%.
-      default: 140
-      selector:
-        number:
-          min: 100
-          max: 220
-          step: 5
-          unit_of_measurement: "%"
-          mode: slider
-    high_growth_threshold_mm:
-      name: Prog intensywnego koszenia
-      description: Po przekroczeniu tej wartosci harmonogram wydluza pojedynczy cykl.
-      default: 14
-      selector:
-        number:
-          min: 5
-          max: 40
-          step: 0.5
-          unit_of_measurement: mm
-          mode: slider
-    min_days_between_mows:
-      name: Minimalna przerwa miedzy koszeniami
-      description: Zabezpieczenie przed zbyt czestym uruchamianiem.
-      default: 1
-      selector:
-        number:
-          min: 0
-          max: 7
-          step: 0.5
-          unit_of_measurement: d
-          mode: slider
-    min_battery_percent:
-      name: Minimalna bateria do startu
-      default: 45
-      selector:
-        number:
-          min: 10
-          max: 100
-          step: 5
-          unit_of_measurement: "%"
-          mode: slider
-    max_rain_24h_mm:
-      name: Maksymalny opad 24 h dla startu
-      description: Jesli spadlo wiecej deszczu, koszenie zostanie odlozone.
-      default: 3
-      selector:
-        number:
-          min: 0
-          max: 30
-          step: 0.5
-          unit_of_measurement: mm
-          mode: slider
-    max_soil_moisture_percent:
-      name: Maksymalna wilgotnosc gleby dla startu
-      description: Powyzej tej wartosci trawnik jest traktowany jako zbyt mokry.
-      default: 72
-      selector:
-        number:
-          min: 20
-          max: 100
-          step: 1
-          unit_of_measurement: "%"
-          mode: slider
-    min_runtime_minutes:
-      name: Minimalny czas koszenia
-      default: 45
-      selector:
-        number:
-          min: 10
-          max: 180
-          step: 5
-          unit_of_measurement: min
-          mode: slider
-    max_runtime_minutes:
-      name: Maksymalny czas koszenia
-      default: 240
-      selector:
-        number:
-          min: 30
-          max: 480
-          step: 15
-          unit_of_measurement: min
-          mode: slider
-    edge_cut_timeout_minutes:
-      name: Maksymalny czas przycinania krawedzi
-      description: Ile minut automatyzacja czeka na zakonczenie przejazdu krawedzi przed normalnym koszeniem.
-      default: 60
-      selector:
-        number:
-          min: 10
-          max: 180
-          step: 5
-          unit_of_measurement: min
-          mode: slider
-    edge_cut_start_timeout_minutes:
-      name: Maksymalny czas oczekiwania na start krawedzi
-      description: Ile minut automatyzacja czeka, az Worx Cloud potwierdzi wyjazd kosiarki po nacisnieciu przycinania krawedzi.
-      default: 10
-      selector:
-        number:
-          min: 2
-          max: 30
-          step: 1
-          unit_of_measurement: min
-          mode: slider
-    mowing_start_confirm_timeout_minutes:
-      name: Maksymalny czas potwierdzenia normalnego koszenia
-      description: Ile minut automatyzacja czeka, az kosiarka wyjedzie po komendzie normalnego koszenia. Jesli nie wyjedzie, komenda zostanie wyslana drugi raz.
-      default: 5
-      selector:
-        number:
-          min: 2
-          max: 20
-          step: 1
-          unit_of_measurement: min
-          mode: slider
-    post_edge_battery_percent:
-      name: Bateria wymagana po krawedziach
-      description: Po powrocie z przycinania krawedzi automatyzacja poczeka w bazie do tego poziomu baterii, zanim uruchomi normalne koszenie.
-      default: 100
-      selector:
-        number:
-          min: 50
-          max: 100
-          step: 1
-          unit_of_measurement: "%"
-          mode: slider
-    post_edge_charge_wait_hours:
-      name: Maksymalny czas ladowania po krawedziach
-      description: Ile godzin automatyzacja moze czekac na naladowanie baterii po przycinaniu krawedzi. Po przekroczeniu czasu nie resetuje przyrostu trawy.
-      default: 8
-      selector:
-        number:
-          min: 1
-          max: 24
-          step: 1
-          unit_of_measurement: h
-          mode: slider
-    growth_update_time:
-      name: Godzina przeliczenia przyrostu
-      default: "05:30:00"
-      selector:
-        time:
-    primary_start_time:
-      name: Glowna godzina startu
-      default: "10:00:00"
-      selector:
-        time:
-    backup_start_time:
-      name: Druga proba startu
-      description: Przydatna, gdy rano trawnik byl jeszcze mokry.
-      default: "16:30:00"
-      selector:
-        time:
+    mower_section:
+      name: 1. Kosiarka
+      icon: mdi:robot-mower
+      input:
+        mower_entity:
+          name: Kosiarka
+          description: Encja lawn_mower z integracji Worx Vision Cloud PLUS.
+          selector:
+            entity:
+              filter:
+                - domain: lawn_mower
+        edge_cut_button:
+          name: Przycisk krawedzi
+          description: Przycisk z integracji Worx Vision Cloud PLUS uruchamiajacy przycinanie krawedzi.
+          selector:
+            entity:
+              filter:
+                - domain: button
+        battery_sensor:
+          name: Bateria
+          description: Sensor procentu baterii kosiarki.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+        rain_binary_sensor:
+          name: Czujnik deszczu kosiarki
+          description: Binary sensor opadow deszczu, uzywany do blokady startu i powrotu do bazy w trakcie deszczu.
+          selector:
+            entity:
+              filter:
+                - domain: binary_sensor
+    weather_section:
+      name: 2. Pogoda
+      icon: mdi:weather-partly-rainy
+      input:
+        temperature_source_entity:
+          name: Temperatura
+          description: Czujnik temperatury zewnetrznej albo encja weather z atrybutem temperature.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                - domain: weather
+        rain_source_entity:
+          name: Opad albo prognoza
+          description: Najlepiej wybierz encje weather, wtedy automatyzacja moze dobrac godzine z prognozy godzinowej.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                - domain: weather
+        sunlight_source_entity:
+          name: Naslonecznienie / UV
+          description: Sensor UV/naslonecznienia albo encja weather z atrybutem uv_index.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                - domain: weather
+        soil_moisture_sensor:
+          name: Wilgotnosc gleby opcjonalnie
+          description: Mozesz zostawic puste. Wtedy automatyzacja policzy wirtualna wilgotnosc z pogody.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+    helpers_section:
+      name: 3. Helpery
+      icon: mdi:database-clock
+      input:
+        growth_helper:
+          name: Przyrost trawy
+          description: Helper input_number przechowujacy szacowany przyrost trawy od ostatniego pelnego koszenia.
+          selector:
+            entity:
+              filter:
+                - domain: input_number
+        last_mow_helper:
+          name: Ostatnie koszenie
+          description: Helper input_datetime aktualizowany po pelnym cyklu koszenia.
+          selector:
+            entity:
+              filter:
+                - domain: input_datetime
+        next_mow_helper:
+          name: Nastepne koszenie
+          description: Helper input_datetime, w ktorym automatyzacja zapisuje przewidywany termin nastepnego koszenia.
+          selector:
+            entity:
+              filter:
+                - domain: input_datetime
+    simple_settings_section:
+      name: 4. Proste ustawienia
+      icon: mdi:tune-variant
+      input:
+        mower_model:
+          name: Model kosiarki
+          description: Wybierz model WORX Vision / Vision Cloud. Dla innego modelu wybierz tryb reczny.
+          default: custom
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - label: Recznie / inny model
+                  value: custom
+                - label: Vision AI S250 WR202E - 250 m2
+                  value: wr202e_250
+                - label: Vision AI M600 WR206E - 600 m2
+                  value: wr206e_600
+                - label: Vision AI M800 WR208E - 800 m2
+                  value: wr208e_800
+                - label: Vision AI L1300 WR213E - 1300 m2
+                  value: wr213e_1300
+                - label: Vision AI L1600 WR216E - 1600 m2
+                  value: wr216e_1600
+                - label: Vision AI WR220 - 1/2 acre
+                  value: wr220_2023
+                - label: Vision Cloud 300 WR303E - 300 m2
+                  value: wr303e_300
+                - label: Vision Cloud 500 WR305E - 500 m2
+                  value: wr305e_500
+                - label: Vision Cloud 650 WR365E - 650 m2
+                  value: wr365e_650
+                - label: Vision Cloud 650 WR365E.1 Cut-to-Zero - 650 m2
+                  value: wr365e1_650
+                - label: Vision Cloud 800 WR308E - 800 m2
+                  value: wr308e_800
+                - label: Vision Cloud 1200 WR312E - 1200 m2
+                  value: wr312e_1200
+                - label: Vision Cloud 1800 WR318E - 1800 m2
+                  value: wr318e_1800
+                - label: Vision Cloud 3000 WR330E - 3000 m2
+                  value: wr330e_3000
+                - label: Vision Cloud 1/4 acre WR310/WR310.1
+                  value: wr310_1012
+                - label: Vision Cloud 1/2 acre WR320/WR320.1
+                  value: wr320_2023
+                - label: Vision Cloud 1 acre WR340
+                  value: wr340_us_4047
+                - label: Vision Cloud 4WD 600 WR340E - 600 m2
+                  value: wr340e_600
+                - label: Vision Cloud 4WD 1000 WR341E - 1000 m2
+                  value: wr341e_1000
+                - label: Vision Cloud 4WD 2000 WR342E - 2000 m2
+                  value: wr342e_2000
+                - label: Vision Cloud 4WD 4000 WR344E - 4000 m2
+                  value: wr344e_4000
+                - label: Vision Cloud 4WD 1/4 acre WR341/WR341.1
+                  value: wr341_us_1012
+                - label: Vision Cloud 4WD 1 acre WR344
+                  value: wr344_us_4047
+        lawn_area_m2:
+          name: Powierzchnia trawnika
+          description: Powierzchnia robocza trawnika w metrach kwadratowych.
+          default: 500
+          selector:
+            number:
+              min: 20
+              max: 5000
+              step: 10
+              unit_of_measurement: m2
+              mode: box
+        planning_mode:
+          name: Tryb wyboru godziny
+          description: Automatycznie wybiera najlepsza godzine z prognozy albo trzyma sie stalej godziny.
+          default: auto
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - label: Automatycznie z prognozy pogody
+                  value: auto
+                - label: Stala godzina
+                  value: fixed
+        primary_start_time:
+          name: Poczatek okna koszenia
+          description: Najwczesniejsza dozwolona godzina startu. W trybie stalej godziny to glowny start.
+          default: "10:00:00"
+          selector:
+            time:
+        backup_start_time:
+          name: Koniec okna koszenia
+          description: Najpozniejsza dozwolona godzina startu. W trybie stalej godziny to druga proba.
+          default: "16:30:00"
+          selector:
+            time:
+        automatic_irrigation_enabled:
+          name: Automatyczne nawadnianie
+          description: Wlacz, jesli trawnik jest regularnie podlewany automatycznie.
+          default: false
+          selector:
+            boolean:
+        fertilization_enabled:
+          name: Trawnik nawozony
+          description: Wlacz, jesli trawnik jest regularnie nawozony.
+          default: false
+          selector:
+            boolean:
+    advanced_growth_section:
+      name: Zaawansowane - wzrost trawy
+      icon: mdi:sprout
+      collapsed: true
+      input:
+        growth_threshold_mm:
+          name: Prog startu koszenia
+          description: Szacowany przyrost trawy w mm od ostatniego koszenia, po ktorym kosiarka moze wystartowac.
+          default: 8
+          selector:
+            number:
+              min: 2
+              max: 25
+              step: 0.5
+              unit_of_measurement: mm
+              mode: slider
+        high_growth_threshold_mm:
+          name: Prog intensywnego koszenia
+          description: Po przekroczeniu tej wartosci harmonogram wydluza pojedynczy cykl.
+          default: 14
+          selector:
+            number:
+              min: 5
+              max: 40
+              step: 0.5
+              unit_of_measurement: mm
+              mode: slider
+        irrigation_growth_adjustment_percent:
+          name: Korekta wzrostu przy nawadnianiu
+          description: Uzywane tylko przy wlaczonym automatycznym nawadnianiu.
+          default: 140
+          selector:
+            number:
+              min: 100
+              max: 220
+              step: 5
+              unit_of_measurement: "%"
+              mode: slider
+        fertilization_growth_adjustment_percent:
+          name: Korekta wzrostu przy nawozeniu
+          description: Uzywane tylko przy wlaczonym nawozeniu.
+          default: 125
+          selector:
+            number:
+              min: 100
+              max: 180
+              step: 5
+              unit_of_measurement: "%"
+              mode: slider
+        min_days_between_mows:
+          name: Minimalna przerwa miedzy koszeniami
+          description: Zabezpieczenie przed zbyt czestym uruchamianiem.
+          default: 1
+          selector:
+            number:
+              min: 0
+              max: 7
+              step: 0.5
+              unit_of_measurement: d
+              mode: slider
+    advanced_runtime_section:
+      name: Zaawansowane - czas pracy
+      icon: mdi:timer-cog
+      collapsed: true
+      input:
+        mower_capacity_m2_per_hour:
+          name: Reczna wydajnosc kosiarki
+          description: Uzywane tylko dla modelu "Recznie / inny model".
+          default: 80
+          selector:
+            number:
+              min: 20
+              max: 250
+              step: 5
+              unit_of_measurement: m2/h
+              mode: slider
+        model_capacity_adjustment_percent:
+          name: Korekta wydajnosci modelu
+          description: Korekta dla waskich przejazdow, wielu stref albo prostego trawnika.
+          default: 100
+          selector:
+            number:
+              min: 50
+              max: 150
+              step: 5
+              unit_of_measurement: "%"
+              mode: slider
+        min_runtime_minutes:
+          name: Minimalny czas koszenia
+          default: 45
+          selector:
+            number:
+              min: 10
+              max: 180
+              step: 5
+              unit_of_measurement: min
+              mode: slider
+        max_runtime_minutes:
+          name: Maksymalny czas koszenia
+          default: 240
+          selector:
+            number:
+              min: 30
+              max: 480
+              step: 15
+              unit_of_measurement: min
+              mode: slider
+    advanced_safety_section:
+      name: Zaawansowane - bezpieczenstwo
+      icon: mdi:shield-check
+      collapsed: true
+      input:
+        growth_update_time:
+          name: Godzina przeliczenia przyrostu
+          default: "05:30:00"
+          selector:
+            time:
+        min_battery_percent:
+          name: Minimalna bateria do startu
+          default: 45
+          selector:
+            number:
+              min: 10
+              max: 100
+              step: 5
+              unit_of_measurement: "%"
+              mode: slider
+        max_rain_24h_mm:
+          name: Maksymalny opad 24 h dla startu
+          description: Jesli spadlo wiecej deszczu, koszenie zostanie odlozone.
+          default: 3
+          selector:
+            number:
+              min: 0
+              max: 30
+              step: 0.5
+              unit_of_measurement: mm
+              mode: slider
+        max_soil_moisture_percent:
+          name: Maksymalna wilgotnosc gleby dla startu
+          description: Powyzej tej wartosci trawnik jest traktowany jako zbyt mokry.
+          default: 72
+          selector:
+            number:
+              min: 20
+              max: 100
+              step: 1
+              unit_of_measurement: "%"
+              mode: slider
+        edge_cut_timeout_minutes:
+          name: Maksymalny czas przycinania krawedzi
+          description: Ile minut automatyzacja czeka na zakonczenie przejazdu krawedzi.
+          default: 60
+          selector:
+            number:
+              min: 10
+              max: 180
+              step: 5
+              unit_of_measurement: min
+              mode: slider
+        edge_cut_start_timeout_minutes:
+          name: Maksymalny czas oczekiwania na start krawedzi
+          description: Ile minut automatyzacja czeka na potwierdzenie wyjazdu do krawedzi.
+          default: 10
+          selector:
+            number:
+              min: 2
+              max: 30
+              step: 1
+              unit_of_measurement: min
+              mode: slider
+        mowing_start_confirm_timeout_minutes:
+          name: Maksymalny czas potwierdzenia normalnego koszenia
+          description: Ile minut automatyzacja czeka na wyjazd po komendzie normalnego koszenia.
+          default: 5
+          selector:
+            number:
+              min: 2
+              max: 20
+              step: 1
+              unit_of_measurement: min
+              mode: slider
+        post_edge_battery_percent:
+          name: Bateria wymagana po krawedziach
+          description: Po powrocie z krawedzi automatyzacja poczeka w bazie do tego poziomu baterii.
+          default: 100
+          selector:
+            number:
+              min: 50
+              max: 100
+              step: 1
+              unit_of_measurement: "%"
+              mode: slider
+        post_edge_charge_wait_hours:
+          name: Maksymalny czas ladowania po krawedziach
+          description: Ile godzin automatyzacja moze czekac na naladowanie baterii po przycinaniu krawedzi.
+          default: 8
+          selector:
+            number:
+              min: 1
+              max: 24
+              step: 1
+              unit_of_measurement: h
+              mode: slider
 
 mode: single
 max_exceeded: silent
@@ -371,11 +437,8 @@ triggers:
     id: update_growth
     at: !input growth_update_time
   - trigger: time
-    id: start_primary
-    at: !input primary_start_time
-  - trigger: time
-    id: start_backup
-    at: !input backup_start_time
+    id: start_scheduled
+    at: !input next_mow_helper
 
 variables:
   mower_entity: !input mower_entity
@@ -396,6 +459,8 @@ variables:
   growth_threshold_mm: !input growth_threshold_mm
   automatic_irrigation_enabled: !input automatic_irrigation_enabled
   irrigation_growth_adjustment_percent: !input irrigation_growth_adjustment_percent
+  fertilization_enabled: !input fertilization_enabled
+  fertilization_growth_adjustment_percent: !input fertilization_growth_adjustment_percent
   high_growth_threshold_mm: !input high_growth_threshold_mm
   min_days_between_mows: !input min_days_between_mows
   min_battery_percent: !input min_battery_percent
@@ -408,8 +473,11 @@ variables:
   mowing_start_confirm_timeout_minutes: !input mowing_start_confirm_timeout_minutes
   post_edge_battery_percent: !input post_edge_battery_percent
   post_edge_charge_wait_hours: !input post_edge_charge_wait_hours
+  planning_mode: !input planning_mode
   primary_start_time_value: !input primary_start_time
   backup_start_time_value: !input backup_start_time
+  notification_id: >-
+    {{ 'worx_smart_mowing_' ~ mower_entity | replace('.', '_') }}
   model_capacity_m2_per_hour: >-
     {% set model = mower_model %}
     {% if model in ['wr202e_250'] %}60
@@ -522,7 +590,7 @@ variables:
     {% endif %}
   effective_rain_factor: >-
     {% set factor = rain_factor | float %}
-    {% if automatic_irrigation_enabled and factor < 0.85 %}0.85{% else %}{{ factor }}{% endif %}
+    {% if automatic_irrigation_enabled and factor < 0.95 %}0.95{% else %}{{ factor }}{% endif %}
   soil_factor: >-
     {% set s = soil_moisture | float %}
     {% if s < 20 %}0.45
@@ -533,7 +601,7 @@ variables:
     {% endif %}
   effective_soil_factor: >-
     {% set factor = soil_factor | float %}
-    {% if automatic_irrigation_enabled and factor < 0.85 %}0.85{% else %}{{ factor }}{% endif %}
+    {% if automatic_irrigation_enabled and factor < 0.95 %}0.95{% else %}{{ factor }}{% endif %}
   sunlight_factor: >-
     {% set u = sunlight_index | float %}
     {% if u < 1 %}0.35
@@ -554,9 +622,15 @@ variables:
     {% else %}
       1
     {% endif %}
+  fertilization_growth_factor: >-
+    {% if fertilization_enabled %}
+      {{ ((fertilization_growth_adjustment_percent | float(125)) / 100) | round(2) }}
+    {% else %}
+      1
+    {% endif %}
   growth_today_mm: >-
-    {% set raw = 4.5 * (temp_factor | float) * (effective_rain_factor | float) * (effective_soil_factor | float) * (sunlight_factor | float) * (season_factor | float) * (irrigation_growth_factor | float) %}
-    {% if raw < 0 %}0{% elif raw > 7 %}7{% else %}{{ raw | round(1) }}{% endif %}
+    {% set raw = 7.5 * (temp_factor | float) * (effective_rain_factor | float) * (effective_soil_factor | float) * (sunlight_factor | float) * (season_factor | float) * (irrigation_growth_factor | float) * (fertilization_growth_factor | float) %}
+    {% if raw < 0 %}0{% elif raw > 12 %}12{% else %}{{ raw | round(1) }}{% endif %}
   new_growth_mm: >-
     {% set raw = (estimated_growth_mm | float) + (growth_today_mm | float) %}
     {% if raw < 0 %}0{% elif raw > 40 %}40{% else %}{{ raw | round(1) }}{% endif %}
@@ -623,6 +697,24 @@ variables:
       {% set days_ready = 1 %}
     {% endif %}
     {{ (as_timestamp(today_at(primary_start_time_value)) + (days_ready * 86400)) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+  start_block_reason: >-
+    {% if states(mower_entity) not in ['docked', 'paused'] %}
+      kosiarka nie jest w bazie ani w pauzie, aktualny stan: {{ states(mower_entity) }}
+    {% elif (states(battery_sensor) | float(0)) < (min_battery_percent | float) %}
+      bateria ma {{ states(battery_sensor) }}%, a wymagane minimum to {{ min_battery_percent }}%
+    {% elif is_state(rain_binary_sensor, 'on') %}
+      czujnik deszczu kosiarki jest aktywny
+    {% elif (rain_mm | float) > (max_rain_24h_mm | float) %}
+      opad wynosi {{ rain_mm }} mm, czyli wiecej niz ustawiony limit {{ max_rain_24h_mm }} mm
+    {% elif (soil_moisture | float) > (max_soil_moisture_percent | float) %}
+      gleba jest zbyt mokra: {{ soil_moisture }}%
+    {% elif (estimated_growth_mm | float) < (growth_threshold_mm | float) %}
+      szacowany przyrost trawy to {{ estimated_growth_mm }} mm, a prog startu to {{ growth_threshold_mm }} mm
+    {% elif (last_mow_days_ago | float) < (min_days_between_mows | float) %}
+      od ostatniego koszenia minelo {{ last_mow_days_ago }} dnia, a minimalna przerwa to {{ min_days_between_mows }} dnia
+    {% else %}
+      {{ '' }}
+    {% endif %}
 
 actions:
   - choose:
@@ -630,6 +722,58 @@ actions:
           - condition: template
             value_template: "{{ trigger.id == 'update_growth' }}"
         sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ planning_mode == 'auto' and rain_source_entity.split('.')[0] == 'weather' }}"
+                sequence:
+                  - action: weather.get_forecasts
+                    target:
+                      entity_id: !input rain_source_entity
+                    data:
+                      type: hourly
+                    response_variable: weather_forecast
+          - variables:
+              planned_next_mow_datetime: >-
+                {% set fallback = stable_next_mow_datetime | trim %}
+                {% if planning_mode != 'auto' or weather_forecast is not defined %}
+                  {{ fallback }}
+                {% else %}
+                  {% set items = weather_forecast.get(rain_source_entity, {}).get('forecast', []) %}
+                  {% set target_date = fallback[:10] %}
+                  {% set window_start = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) %}
+                  {% set raw_window_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
+                  {% set window_end = raw_window_end if raw_window_end > window_start else window_start + 21600 %}
+                  {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
+                  {% set ns = namespace(best_ts=0, best_score=999999) %}
+                  {% for item in items %}
+                    {% set ts = as_timestamp(item.datetime) %}
+                    {% if ts >= window_start and ts <= window_end and ts >= (as_timestamp(now()) + 300) %}
+                      {% set rain = item.precipitation | default(0) | float(0) %}
+                      {% set probability = item.precipitation_probability | default(0) | float(0) %}
+                      {% set temp = item.temperature | default(temp_c) | float(temp_c) %}
+                      {% set wind = item.wind_speed | default(0) | float(0) %}
+                      {% set humidity = item.humidity | default(60) | float(60) %}
+                      {% set condition = item.condition | default('') %}
+                      {% set score = (rain * 200) + (probability * 2) + (((temp - 20) | abs) * 3) + (wind * 0.8) %}
+                      {% if humidity > 85 %}
+                        {% set score = score + 30 %}
+                      {% endif %}
+                      {% if condition in bad %}
+                        {% set score = score + 500 %}
+                      {% endif %}
+                      {% if score < ns.best_score %}
+                        {% set ns.best_score = score %}
+                        {% set ns.best_ts = ts %}
+                      {% endif %}
+                    {% endif %}
+                  {% endfor %}
+                  {% if ns.best_ts > 0 %}
+                    {{ ns.best_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+                  {% else %}
+                    {{ fallback }}
+                  {% endif %}
+                {% endif %}
           - action: input_number.set_value
             target:
               entity_id: !input growth_helper
@@ -644,19 +788,25 @@ actions:
                     target:
                       entity_id: "{{ next_mow_helper }}"
                     data:
-                      datetime: "{{ stable_next_mow_datetime }}"
+                      datetime: "{{ planned_next_mow_datetime | trim }}"
+          - action: persistent_notification.create
+            data:
+              notification_id: "{{ notification_id }}"
+              title: "Worx: zaktualizowano harmonogram"
+              message: >-
+                Przyrost dzisiaj: {{ growth_today_mm }} mm. Skumulowany przyrost:
+                {{ new_growth_mm }} mm. Nastepne planowane koszenie:
+                {{ planned_next_mow_datetime | trim }}.
 
       - conditions:
           - condition: template
-            value_template: "{{ trigger.id in ['start_primary', 'start_backup'] }}"
+            value_template: "{{ trigger.id == 'start_scheduled' }}"
         sequence:
           - choose:
               - conditions:
                   - condition: template
-                    alias: Trawa albo minimalna przerwa nie pozwala jeszcze kosic
-                    value_template: >-
-                      {{ (estimated_growth_mm | float) < (growth_threshold_mm | float)
-                         or (last_mow_days_ago | float) < (min_days_between_mows | float) }}
+                    alias: Start koszenia jest zablokowany
+                    value_template: "{{ (start_block_reason | trim | length) > 0 }}"
                 sequence:
                   - choose:
                       - conditions:
@@ -669,28 +819,18 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ next_mow_datetime }}"
-                  - stop: Warunki koszenia nie sa jeszcze spelnione; przesunieto nastepne koszenie.
-          - condition: template
-            alias: Kosiarka musi byc w bazie albo pauzie
-            value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
-          - condition: template
-            alias: Wystarczajaca bateria
-            value_template: "{{ states(battery_sensor) | float(0) >= (min_battery_percent | float) }}"
-          - condition: template
-            alias: Czujnik opadow deszczu nieaktywny
-            value_template: "{{ is_state(rain_binary_sensor, 'off') }}"
-          - condition: template
-            alias: Trawnik nie jest po zbyt duzym opadzie
-            value_template: "{{ (rain_mm | float) <= (max_rain_24h_mm | float) }}"
-          - condition: template
-            alias: Gleba nie jest zbyt mokra
-            value_template: "{{ (soil_moisture | float) <= (max_soil_moisture_percent | float) }}"
-          - condition: template
-            alias: Trawa przekroczyla prog koszenia
-            value_template: "{{ (estimated_growth_mm | float) >= (growth_threshold_mm | float) }}"
-          - condition: template
-            alias: Zachowana minimalna przerwa
-            value_template: "{{ (last_mow_days_ago | float) >= (min_days_between_mows | float) }}"
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: koszenie odlozone"
+                      message: >-
+                        Koszenie nie zostalo uruchomione o
+                        {{ now().strftime('%Y-%m-%d %H:%M:%S') }}.
+                        Powod: {{ start_block_reason | trim }}.
+                        Nastepne planowane koszenie: {{ next_mow_datetime }}.
+                  - stop: Warunki koszenia nie sa spelnione; przesunieto nastepne koszenie.
+          - variables:
+              mowing_cycle_started_at: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
           - action: button.press
             alias: Uruchom przycinanie krawedzi
             target:
@@ -713,11 +853,28 @@ actions:
                   - action: lawn_mower.dock
                     target:
                       entity_id: !input mower_entity
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: koszenie odlozone"
+                      message: >-
+                        Koszenie nie zostalo wykonane. Przycinanie krawedzi
+                        przerwal deszcz. Nastepne planowane koszenie:
+                        {{ next_mow_datetime }}.
                   - stop: Przycinanie krawedzi przerwane przez deszcz.
               - conditions:
                   - condition: template
                     value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
                 sequence:
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: koszenie nie wystartowalo"
+                      message: >-
+                        Worx Cloud nie potwierdzil wyjazdu do krawedzi w
+                        limicie {{ edge_cut_start_timeout_minutes }} min.
+                        Kosiarka nadal ma stan {{ states(mower_entity) }}.
+                        Nastepne planowane koszenie: {{ next_mow_datetime }}.
                   - stop: Nie potwierdzono startu przycinania krawedzi w limicie czasu.
           - alias: Poczekaj na zakonczenie przycinania krawedzi
             repeat:
@@ -737,6 +894,14 @@ actions:
                   - action: lawn_mower.dock
                     target:
                       entity_id: !input mower_entity
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: koszenie odlozone"
+                      message: >-
+                        Koszenie nie zostalo wykonane. Przycinanie krawedzi
+                        przerwal deszcz. Nastepne planowane koszenie:
+                        {{ next_mow_datetime }}.
                   - stop: Przycinanie krawedzi przerwane przez deszcz.
               - conditions:
                   - condition: template
@@ -745,6 +910,15 @@ actions:
                   - action: lawn_mower.dock
                     target:
                       entity_id: !input mower_entity
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: koszenie przerwane"
+                      message: >-
+                        Przycinanie krawedzi nie zakonczylo sie w limicie
+                        {{ edge_cut_timeout_minutes }} min, wiec kosiarka
+                        zostala odeslana do bazy. Nastepne planowane koszenie:
+                        {{ next_mow_datetime }}.
                   - stop: Przycinanie krawedzi nie zakonczylo sie przed limitem czasu.
           - condition: template
             alias: Przycinanie krawedzi zakonczone
@@ -765,16 +939,42 @@ actions:
                   - condition: template
                     value_template: "{{ is_state(rain_binary_sensor, 'on') }}"
                 sequence:
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: koszenie odlozone"
+                      message: >-
+                        Po przycinaniu krawedzi zaczal padac deszcz. Normalne
+                        koszenie nie zostalo uruchomione. Nastepne planowane
+                        koszenie: {{ next_mow_datetime }}.
                   - stop: Po przycinaniu krawedzi zaczal padac deszcz.
               - conditions:
                   - condition: template
                     value_template: "{{ states(mower_entity) not in ['docked', 'paused'] }}"
                 sequence:
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: koszenie przerwane"
+                      message: >-
+                        Kosiarka opuscila baze podczas oczekiwania na ladowanie
+                        po krawedziach. Normalne koszenie nie zostalo
+                        uruchomione. Nastepne planowane koszenie:
+                        {{ next_mow_datetime }}.
                   - stop: Kosiarka opuscila baze podczas ladowania po krawedziach.
               - conditions:
                   - condition: template
                     value_template: "{{ (states(battery_sensor) | float(0)) < (post_edge_battery_percent | float(100)) }}"
                 sequence:
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: koszenie odlozone"
+                      message: >-
+                        Po krawedziach bateria osiagnela {{ states(battery_sensor) }}%,
+                        a wymagane jest {{ post_edge_battery_percent }}%.
+                        Normalne koszenie nie zostalo uruchomione. Nastepne
+                        planowane koszenie: {{ next_mow_datetime }}.
                   - stop: Bateria nie osiagnela wymaganego poziomu po przycinaniu krawedzi.
           - delay:
               minutes: 2
@@ -810,9 +1010,33 @@ actions:
                                and repeat.index <= ((mowing_start_confirm_timeout_minutes | int(5)) * 6) }}
                       sequence:
                         - delay: "00:00:10"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
+                sequence:
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: normalne koszenie nie wystartowalo"
+                      message: >-
+                        Po krawedziach wyslano komende normalnego koszenia, ale
+                        kosiarka nadal ma stan {{ states(mower_entity) }} po
+                        dwoch probach startu. Nastepne planowane koszenie:
+                        {{ next_mow_datetime }}.
+                  - stop: Nie potwierdzono startu normalnego koszenia po dwoch probach.
           - condition: template
             alias: Normalne koszenie rozpoczete
             value_template: "{{ states(mower_entity) not in ['docked', 'paused'] }}"
+          - action: persistent_notification.create
+            data:
+              notification_id: "{{ notification_id }}"
+              title: "Worx: koszenie rozpoczete"
+              message: >-
+                Kosiarka rozpoczela normalne koszenie o
+                {{ now().strftime('%Y-%m-%d %H:%M:%S') }} po zakonczeniu
+                krawedzi i doladowaniu baterii. Planowany czas pracy:
+                {{ recommended_runtime_minutes }} min.
           - alias: Koszenie przez wyliczony czas albo do deszczu
             repeat:
               while:
@@ -855,9 +1079,38 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ next_mow_after_reset_datetime }}"
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: koszenie wykonane"
+                      message: >-
+                        Koszenie wystartowalo {{ mowing_cycle_started_at }} i
+                        zostalo zakonczone o {{ now().strftime('%Y-%m-%d %H:%M:%S') }}.
+                        Szacowany czas pracy: {{ recommended_runtime_minutes }} min.
+                        Nastepne planowane koszenie:
+                        {{ next_mow_after_reset_datetime }}.
             default:
               - action: input_number.set_value
                 target:
                   entity_id: !input growth_helper
                 data:
                   value: "{{ ((estimated_growth_mm | float) * 0.7) | round(1) }}"
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                    sequence:
+                      - action: input_datetime.set_datetime
+                        target:
+                          entity_id: "{{ next_mow_helper }}"
+                        data:
+                          datetime: "{{ next_mow_datetime }}"
+              - action: persistent_notification.create
+                data:
+                  notification_id: "{{ notification_id }}"
+                  title: "Worx: koszenie przerwane"
+                  message: >-
+                    Koszenie zostalo przerwane przez deszcz. Przyrost trawy
+                    zostal zmniejszony tylko czesciowo do
+                    {{ ((estimated_growth_mm | float) * 0.7) | round(1) }} mm.
+                    Nastepne planowane koszenie: {{ next_mow_datetime }}.

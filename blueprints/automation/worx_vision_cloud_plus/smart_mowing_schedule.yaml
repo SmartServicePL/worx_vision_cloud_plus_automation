@@ -679,16 +679,40 @@ variables:
     {% else %}
       {% set days_growth = (missing_growth / daily_growth) | round(0, 'ceil') | int %}
     {% endif %}
-    {% set missing_gap = (min_days_between_mows | float) - (last_mow_days_ago | float) %}
-    {% if missing_gap <= 0 %}
-      {% set days_gap = 0 %}
-    {% else %}
-      {% set days_gap = missing_gap | round(0, 'ceil') | int %}
-    {% endif %}
-    {% set days_ready = days_growth if days_growth > days_gap else days_gap %}
     {% set primary = today_at(primary_start_time_value) %}
     {% set backup = today_at(backup_start_time_value) %}
-    {% if days_ready <= 0 %}
+    {% set primary_ts = as_timestamp(primary) %}
+    {% set backup_ts = as_timestamp(backup) %}
+    {% set window_end_ts = backup_ts if backup_ts > primary_ts else primary_ts + 21600 %}
+    {% if trigger.id == 'update_growth' %}
+      {% set last_raw = states(last_mow_helper) %}
+      {% set gap_ready_ts = 0 %}
+      {% if last_raw not in ['unknown', 'unavailable', 'none', ''] %}
+        {% set gap_ready_ts = as_timestamp(last_raw) + ((min_days_between_mows | float) * 86400) %}
+      {% endif %}
+      {% set growth_ready_ts = primary_ts + (days_growth * 86400) %}
+      {% set earliest_ts = [growth_ready_ts, gap_ready_ts, as_timestamp(now()) + 300] | max %}
+      {% set target_date = earliest_ts | timestamp_custom('%Y-%m-%d', true) %}
+      {% set target_primary_ts = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) %}
+      {% set target_raw_window_end_ts = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
+      {% set target_window_end_ts = target_raw_window_end_ts if target_raw_window_end_ts > target_primary_ts else target_primary_ts + 21600 %}
+      {% if earliest_ts <= target_primary_ts %}
+        {{ target_primary_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+      {% elif earliest_ts <= target_window_end_ts %}
+        {% set selected_ts = ((earliest_ts / 60) | round(0, 'ceil') | int) * 60 %}
+        {{ selected_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+      {% else %}
+        {{ (target_primary_ts + 86400) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+      {% endif %}
+    {% else %}
+      {% set missing_gap = (min_days_between_mows | float) - (last_mow_days_ago | float) %}
+      {% if missing_gap <= 0 %}
+        {% set days_gap = 0 %}
+      {% else %}
+        {% set days_gap = missing_gap | round(0, 'ceil') | int %}
+      {% endif %}
+      {% set days_ready = days_growth if days_growth > days_gap else days_gap %}
+      {% if days_ready <= 0 %}
       {% if as_timestamp(now()) < as_timestamp(primary) %}
         {{ as_timestamp(primary) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
       {% elif as_timestamp(now()) < as_timestamp(backup) %}
@@ -696,8 +720,9 @@ variables:
       {% else %}
         {{ (as_timestamp(primary) + 86400) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
       {% endif %}
-    {% else %}
-      {{ (as_timestamp(primary) + (days_ready * 86400)) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+      {% else %}
+        {{ (as_timestamp(primary) + (days_ready * 86400)) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+      {% endif %}
     {% endif %}
   stable_next_mow_datetime: >-
     {% set calculated_ts = as_timestamp(next_mow_datetime) %}
@@ -763,11 +788,12 @@ actions:
                   {% set raw_window_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
                   {% set window_end = raw_window_end if raw_window_end > window_start else window_start + 21600 %}
                   {% set window_mid = ((window_start + window_end) / 2) %}
+                  {% set earliest_allowed_ts = as_timestamp(fallback) %}
                   {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
                   {% set ns = namespace(best_ts=0, best_score=999999) %}
                   {% for item in items %}
                     {% set ts = as_timestamp(item.datetime) %}
-                    {% if ts >= window_start and ts <= window_end and ts >= (as_timestamp(now()) + 300) %}
+                    {% if ts >= window_start and ts <= window_end and ts >= earliest_allowed_ts and ts >= (as_timestamp(now()) + 300) %}
                       {% set rain = item.precipitation | default(0) | float(0) %}
                       {% set probability = item.precipitation_probability | default(0) | float(0) %}
                       {% set temp = item.temperature | default(temp_c) | float(temp_c) %}
@@ -844,11 +870,12 @@ actions:
                   {% set raw_window_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
                   {% set window_end = raw_window_end if raw_window_end > window_start else window_start + 21600 %}
                   {% set window_mid = ((window_start + window_end) / 2) %}
+                  {% set earliest_allowed_ts = as_timestamp(fallback) %}
                   {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
                   {% set ns = namespace(best_ts=0, best_score=999999) %}
                   {% for item in items %}
                     {% set ts = as_timestamp(item.datetime) %}
-                    {% if ts >= window_start and ts <= window_end and ts >= (as_timestamp(now()) + 300) %}
+                    {% if ts >= window_start and ts <= window_end and ts >= earliest_allowed_ts and ts >= (as_timestamp(now()) + 300) %}
                       {% set rain = item.precipitation | default(0) | float(0) %}
                       {% set probability = item.precipitation_probability | default(0) | float(0) %}
                       {% set temp = item.temperature | default(temp_c) | float(temp_c) %}
@@ -1195,11 +1222,12 @@ actions:
                           {% set raw_window_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
                           {% set window_end = raw_window_end if raw_window_end > window_start else window_start + 21600 %}
                           {% set window_mid = ((window_start + window_end) / 2) %}
+                          {% set earliest_allowed_ts = as_timestamp(fallback) %}
                           {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
                           {% set ns = namespace(best_ts=0, best_score=999999) %}
                           {% for item in items %}
                             {% set ts = as_timestamp(item.datetime) %}
-                            {% if ts >= window_start and ts <= window_end and ts >= (as_timestamp(now()) + 300) %}
+                            {% if ts >= window_start and ts <= window_end and ts >= earliest_allowed_ts and ts >= (as_timestamp(now()) + 300) %}
                               {% set rain = item.precipitation | default(0) | float(0) %}
                               {% set probability = item.precipitation_probability | default(0) | float(0) %}
                               {% set temp = item.temperature | default(temp_c) | float(temp_c) %}

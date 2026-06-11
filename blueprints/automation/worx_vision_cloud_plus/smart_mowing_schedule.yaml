@@ -2,7 +2,7 @@ blueprint:
   name: Worx Vision Cloud PLUS - inteligentny harmonogram koszenia
   description: |
     Inteligentny harmonogram koszenia dla robotow Worx Vision Cloud PLUS.
-    Wersja automatyzacji: 0.2.0.
+    Wersja automatyzacji: 0.2.1.
 
     Co robi automatyzacja:
     - codziennie szacuje przyrost trawy modelem Growth Potential (GP),
@@ -1418,7 +1418,7 @@ actions:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ states(mower_entity) in ['mowing', 'paused'] }}"
+                    value_template: "{{ states(mower_entity) not in ['docked', 'paused', 'unavailable', 'unknown'] }}"
                 sequence:
                   - action: lawn_mower.dock
                     target:

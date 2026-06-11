@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.1 - 2026-06-11
+
+- Hardened the normal mowing finish step so the automation sends the mower home after the calculated runtime whenever the mower is still in any active state, not only when Home Assistant reports `mowing`.
+
 ## 0.2.0 - 2026-06-11
 
 - Changed grass growth estimation to a cool-season turf Growth Potential (GP) temperature model.

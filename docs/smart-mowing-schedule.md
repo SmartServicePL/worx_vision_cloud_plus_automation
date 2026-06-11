@@ -4,7 +4,7 @@
 
 `blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml` adds a dynamic Home Assistant automation for Worx Vision Cloud PLUS mowers.
 
-The blueprint does not rewrite the schedule stored in Worx Cloud. Instead, it creates a Home Assistant controlled schedule: it estimates grass growth once a day, stores that estimate in a helper, stores the next planned mowing time in a second date/time helper, and starts the mower during one of two configured time windows only when the lawn actually needs cutting. Every planned start begins with on-demand edge cutting, then continues with normal mowing after the edge pass is complete and the mower has recharged in the dock.
+The blueprint does not rewrite the schedule stored in Worx Cloud. Instead, it creates a Home Assistant controlled schedule: it estimates grass growth once a day, stores that estimate in a helper, stores the next planned mowing time in a second date/time helper, and starts the mower only when the lawn actually needs cutting. In automatic mode it searches forecast-based slots inside the selected mowing window and can move the run to a better moment in the next few days. Every planned start begins with on-demand edge cutting, then continues with normal mowing after the edge pass is complete and the mower has recharged in the dock.
 
 Before enabling this automation, disable the mowing schedule in the WORX app. If both schedules stay active, the app and Home Assistant can start the mower independently, which makes the calculated growth estimate and next-mow time unreliable.
 
@@ -26,7 +26,7 @@ The growth estimate needs these external Home Assistant sources:
 - Soil moisture in `%`, if you have a lawn soil probe. This input is optional.
 - Sunlight/UV sensor on a 0-10 scale, or a `weather` entity with the `uv_index` attribute.
 
-The calculation is intentionally conservative. Grass growth is strongest when temperature, soil moisture, recent rainfall and light are all in a useful range. Winter months almost stop the estimate, spring and autumn reduce it, and the main growing season uses the full multiplier.
+The calculation is intentionally conservative. Temperature now uses a cool-season turf Growth Potential (GP) curve: growth is strongest around a mild optimum near `20 C`, then drops when it is too cold or too hot. Soil moisture, recent rainfall, light, irrigation, fertilization and season still adjust the final result. Winter months strongly reduce the estimate, spring and autumn reduce it, and the main growing season uses the full multiplier.
 
 If the lawn has automatic irrigation, enable **Automatyczne nawadnianie** in the blueprint. No irrigation switch or section list is needed. The blueprint then treats the lawn as regularly watered and applies the **Korekta wzrostu przy nawadnianiu** percentage, for example `140%` when irrigated grass grows clearly faster than the weather-only estimate.
 
@@ -53,10 +53,10 @@ There is a package example in `docs/smart-mowing-helpers-package.yaml` with all 
 
 ## How the schedule is chosen
 
-Every morning the blueprint calculates `growth_today_mm`:
+Every morning the blueprint calculates `growth_today_mm` with the GP-based model:
 
 ```text
-4.5 mm * temperature factor * water factor * soil moisture factor * sunlight factor * season factor * optional irrigation correction
+8.5 mm * GP temperature factor * water factor * soil moisture factor * sunlight factor * season factor * irrigation/fertilization corrections
 ```
 
 That value is added to the `input_number` helper. At the configured start times, the automation starts mowing only when:
@@ -70,7 +70,7 @@ That value is added to the `input_number` helper. At the configured start times,
 
 When those conditions are met, the automation presses the edge cutting button first. It waits for Worx Cloud to confirm that the mower left the dock, then waits until the mower returns to `docked` or `paused`. After the edge pass, it waits in the dock until the battery reaches the configured post-edge target, which defaults to `100%`. Then it starts normal mowing for the calculated runtime. If Home Assistant does not see the mower leave the dock after the first normal mowing command, the automation sends the start command one more time before treating the run as failed. If rain starts during the edge pass or during post-edge charging, or if the edge pass/charging does not finish before the configured timeout, the automation does not reset the growth helper.
 
-The next planned mowing helper is updated after the daily growth calculation. The planned time is the earliest primary or backup start slot where the estimated growth threshold and the minimum break between mowing cycles should be satisfied. The daily calculation writes the newly calculated time to the helper, so a stored future time can move later when the lawn is not ready yet. If a primary or backup start fires before the growth threshold or minimum break is reached, the automation updates the helper to the next calculated mowing time and stops without starting the mower. After a full mowing cycle, the helper is moved forward again based on the reset growth estimate.
+The next planned mowing helper is updated after the daily growth calculation. In automatic mode the planned time is chosen from 15-minute forecast slots over the next few days. Rain, high rain probability, high humidity, wind, temperature far from the useful range, and recent rain all increase the score for a slot, so the automation prefers a dry and sensible mowing moment. In fixed-time mode the helper still follows the configured primary start and backup attempt. If a stored start is missed, a short recurring checker can still start the run within the grace period instead of leaving a stale time in the helper. After a full mowing cycle, the helper is moved forward again based on the reset growth estimate.
 
 Runtime is based on lawn size and real mower capacity:
 
@@ -99,7 +99,7 @@ Good first values for most gardens:
 - Automatic irrigation: enable only for regularly watered lawns, start with `130-150%`.
 - Minimum break: `1 day`.
 - Maximum rain in 24 h: `3 mm`.
-- Maximum soil moisture: `70-75%`.
+- Maximum soil moisture: leave `100%` when soil moisture should only help with growth estimation. Use `70-75%` only if a real lawn probe should block mowing on wet soil.
 
 After one week, tune the model correction. If the mower regularly returns before covering enough lawn, lower the correction. If it finishes comfortably and the lawn is consistently short, raise it slightly or increase the start threshold.
 

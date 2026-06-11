@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.2.0 - 2026-06-11
+
+- Changed grass growth estimation to a cool-season turf Growth Potential (GP) temperature model.
+- Reworked automatic planning so forecast-based mowing slots are scored across the next few days instead of sticking to only the primary or backup hour.
+- Added wet-grass protections for recent rain, rain probability and high humidity in the automatic slot search.
+- Improved mowing notifications so they explain when mowing is planned or skipped and why, using readable relative labels such as today, tomorrow and in 2 days.
+- Added a missed-start checker so a planned start can still run shortly after the stored helper time.
+
 - Added a simple automatic-irrigation growth correction for regularly watered lawns.
 - Fixed the next planned mowing helper so daily recalculation can postpone a stored future time when the grass growth threshold or minimum mowing gap is not ready yet.
 - When a primary or backup start fires before mowing is required, the automation now updates the next planned mowing helper and stops without leaving a stale missed start time.

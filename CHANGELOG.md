@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.4 - 2026-06-12
+
+- Simplified the mowing start sequence: planned starts now send one one-time mowing command with edge cutting enabled, without a separate edge-only pass, dock/charge wait, or separate normal mowing command.
+
 ## 0.2.3 - 2026-06-12
 
 - Added simple mowing window presets: morning, before noon, noon, afternoon, evening and custom hours.

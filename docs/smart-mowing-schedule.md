@@ -4,14 +4,14 @@
 
 `blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml` adds a dynamic Home Assistant automation for Worx Vision Cloud PLUS mowers.
 
-The blueprint does not rewrite the schedule stored in Worx Cloud. Instead, it creates a Home Assistant controlled schedule: it estimates grass growth once a day, stores that estimate in a helper, stores the next planned mowing time in a second date/time helper, and starts the mower only when the lawn actually needs cutting. In automatic mode it searches forecast-based slots inside the selected mowing window and can move the run to a better moment in the next few days. Every planned start begins with on-demand edge cutting, then continues with normal mowing after the edge pass is complete and the mower has recharged in the dock.
+The blueprint does not rewrite the schedule stored in Worx Cloud. Instead, it creates a Home Assistant controlled schedule: it estimates grass growth once a day, stores that estimate in a helper, stores the next planned mowing time in a second date/time helper, and starts the mower only when the lawn actually needs cutting. In automatic mode it searches forecast-based slots inside the selected mowing window and can move the run to a better moment in the next few days. Every planned start sends one Worx Vision Cloud PLUS one-time mowing command with edge cutting enabled. The automation no longer splits the cycle into edge cutting, return to dock, charging and a separate normal mowing command.
 
 Before enabling this automation, disable the mowing schedule in the WORX app. If both schedules stay active, the app and Home Assistant can start the mower independently, which makes the calculated growth estimate and next-mow time unreliable.
 
 ## Required mower entities
 
 - `lawn_mower.<mower>_kosiarka` - mower control entity.
-- `button.<mower>_uruchom_przycinanie_krawedzi` - starts on-demand edge cutting.
+- One-time mowing service from the Worx Vision Cloud PLUS integration, with edge cutting support.
 - `sensor.<mower>_bateria` - battery percentage.
 - `binary_sensor.<mower>_czujnik_opadow_deszczu` - rain precipitation sensor.
 
@@ -70,7 +70,7 @@ That value is added to the `input_number` helper. At the configured start times,
 
 By default the mowing threshold is calculated from the selected cutting height. The blueprint uses about one third of the target blade height, so a `40 mm` cutting height gives a start threshold of about `13.3 mm`. Users who prefer the older behavior can switch the threshold mode to manual and set the start threshold directly.
 
-When those conditions are met, the automation presses the edge cutting button first. It waits for Worx Cloud to confirm that the mower left the dock, then waits until the mower returns to `docked` or `paused`. After the edge pass, it waits in the dock until the battery reaches the configured post-edge target, which defaults to `100%`. Then it starts normal mowing for the calculated runtime. If Home Assistant does not see the mower leave the dock after the first normal mowing command, the automation sends the start command one more time before treating the run as failed. If rain starts during the edge pass or during post-edge charging, or if the edge pass/charging does not finish before the configured timeout, the automation does not reset the growth helper.
+When those conditions are met, the automation sends a single one-time mowing command with edge cutting enabled and the calculated runtime. It does not send a dock command before the run, does not wait for a separate edge-only pass, and does not wait for post-edge charging. If Home Assistant does not see the mower leave the dock after the first command, the same one-time mowing command with edge cutting enabled is sent one more time before treating the run as failed. If rain starts while mowing, the mower returns to dock and the growth estimate is only partially reduced, so the automation can retry later.
 
 The next planned mowing helper is updated after the daily growth calculation. In automatic mode the planned time is chosen from 15-minute forecast slots over the next few days inside the selected mowing window preset: morning, before noon, noon, afternoon, evening, or custom hours. Rain, high rain probability, high humidity, wind, temperature far from the useful range, and recent rain all increase the score for a slot, so the automation prefers a dry and sensible mowing moment. In fixed-time mode the helper still follows the configured primary start and backup attempt. If a stored start is missed, a short recurring checker can still start the run within the grace period instead of leaving a stale time in the helper. After a full mowing cycle, the helper is moved forward again based on the reset growth estimate.
 

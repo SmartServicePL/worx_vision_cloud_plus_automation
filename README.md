@@ -23,7 +23,7 @@ https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/bl
 
 ## Smart Mowing Schedule
 
-The smart mowing blueprint estimates grass growth with a cool-season turf Growth Potential (GP) temperature model combined with rain, optional soil moisture, sunlight/UV data, and optional irrigation/fertilization corrections. It stores the estimated grass growth in an `input_number`, tracks the last full mowing cycle in an `input_datetime`, stores the next planned mowing time in another `input_datetime`, and starts the mower only when the lawn needs mowing. The start threshold can be calculated automatically from the selected cutting height (`20-60 mm`) using the one-third blade rule, with a manual threshold still available as an advanced option. In automatic mode it searches forecast-based mowing slots and prefers dry grass, no rain, and a sensible time inside the selected window preset. Every planned smart mowing start first runs the Worx Vision Cloud PLUS edge cutting button, waits for the edge pass to finish, waits for the mower to recharge in the dock, and then starts normal mowing with a second start attempt if Home Assistant does not see the mower leave the dock.
+The smart mowing blueprint estimates grass growth with a cool-season turf Growth Potential (GP) temperature model combined with rain, optional soil moisture, sunlight/UV data, and optional irrigation/fertilization corrections. It stores the estimated grass growth in an `input_number`, tracks the last full mowing cycle in an `input_datetime`, stores the next planned mowing time in another `input_datetime`, and starts the mower only when the lawn needs mowing. The start threshold can be calculated automatically from the selected cutting height (`20-60 mm`) using the one-third blade rule, with a manual threshold still available as an advanced option. In automatic mode it searches forecast-based mowing slots and prefers dry grass, no rain, and a sensible time inside the selected window preset. Every planned smart mowing start sends one Worx Vision Cloud PLUS one-time mowing command with edge cutting enabled; if Home Assistant does not see the mower leave the dock, the same command is sent one more time.
 
 Before enabling this blueprint, disable the mowing schedule in the WORX app so Home Assistant is the only scheduler controlling mower starts.
 
@@ -49,7 +49,7 @@ blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml
 - Home Assistant 2025.1.0 or newer.
 - Worx Vision Cloud PLUS integration `1.0.0` or newer installed from [`SmartServicePL/worx_vision_cloud_plus_github`](https://github.com/SmartServicePL/worx_vision_cloud_plus_github).
 - A `lawn_mower` entity for the mower.
-- The `button` entity that starts on-demand edge cutting.
+- The one-time mowing service from the Worx Vision Cloud PLUS integration.
 - Battery and rain entities from the integration.
 - Temperature, rain/weather and sunlight/UV sources from Home Assistant.
 - Optional automatic-irrigation setting for lawns that are watered regularly.

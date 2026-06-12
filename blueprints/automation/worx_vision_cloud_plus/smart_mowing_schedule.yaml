@@ -449,6 +449,9 @@ blueprint:
 mode: single
 max_exceeded: silent
 
+trigger_variables:
+  repair_mower_entity: !input mower_entity
+
 triggers:
   - trigger: time
     id: update_growth
@@ -459,6 +462,15 @@ triggers:
   - trigger: time_pattern
     id: start_due_check
     minutes: "/5"
+  - trigger: template
+    id: repair_cloud_status_at_station
+    value_template: >-
+      {% set state = states(repair_mower_entity) %}
+      {% set status_id = state_attr(repair_mower_entity, 'status_id') | int(-1) %}
+      {{ state_attr(repair_mower_entity, 'rtk_at_station') == true
+         and (state in ['mowing', 'returning']
+              or status_id in [4, 5, 6, 7, 8, 12, 30, 32, 104, 110, 111]) }}
+    for: "00:05:00"
 
 variables:
   mower_entity: !input mower_entity
@@ -788,6 +800,49 @@ variables:
 
 actions:
   - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'repair_cloud_status_at_station' }}"
+        sequence:
+          - condition: template
+            value_template: >-
+              {% set status_id = state_attr(mower_entity, 'status_id') | int(-1) %}
+              {{ state_attr(mower_entity, 'rtk_at_station') == true
+                 and (states(mower_entity) in ['mowing', 'returning']
+                      or status_id in [4, 5, 6, 7, 8, 12, 30, 32, 104, 110, 111]) }}
+          - action: persistent_notification.create
+            data:
+              notification_id: "{{ notification_id }}"
+              title: "Worx: naprawa statusu chmury"
+              message: >-
+                RTK przez 5 minut pokazuje kosiarke przy stacji, ale Worx Cloud
+                nadal pokazuje aktywny stan: {{ states(mower_entity) }}
+                (status {{ state_attr(mower_entity, 'status_id') }},
+                {{ state_attr(mower_entity, 'status_description') }}).
+                Uruchamiam krotkie koszenie na 1 minute i odsylam kosiarke do bazy,
+                zeby chmura Worx odswiezyla stan.
+          - action: worx_vision_cloud.start_one_time_mowing
+            alias: Minutowy start do odswiezenia statusu Worx Cloud
+            data:
+              entity_id: !input mower_entity
+              runtime: 1
+              edge_cut: false
+              zones: []
+          - delay: "00:01:10"
+            alias: Pozwol robotowi ruszyc przez minute
+          - action: lawn_mower.dock
+            alias: Odeslij robota do bazy po minutowym starcie
+            target:
+              entity_id: !input mower_entity
+          - action: persistent_notification.create
+            data:
+              notification_id: "{{ notification_id }}"
+              title: "Worx: wyslano naprawe statusu"
+              message: >-
+                Wyslano minutowy start i powrot do bazy. Automatyzacja nadal
+                bazuje na statusie Worx Cloud; RTK sluzy tylko do wykrycia,
+                ze robot fizycznie stoi przy stacji.
+          - stop: Wykonano naprawe zawieszonego statusu chmury Worx.
       - conditions:
           - condition: template
             value_template: "{{ trigger.id == 'update_growth' }}"

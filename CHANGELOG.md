@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.2.2 - 2026-06-12
+
+- Added a Worx Cloud status recovery guard: when RTK shows the mower at the station for 5 minutes while the cloud still reports an active mowing/returning state, the automation starts a 1-minute mowing command and sends the mower back to the dock.
+- Added Home Assistant notifications explaining when this cloud status recovery is being sent.
+
 ## 0.2.1 - 2026-06-11
 
 - Hardened the normal mowing finish step so the automation sends the mower home after the calculated runtime whenever the mower is still in any active state, not only when Home Assistant reports `mowing`.

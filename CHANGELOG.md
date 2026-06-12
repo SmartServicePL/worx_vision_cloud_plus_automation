@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.3 - 2026-06-12
+
+- Added simple mowing window presets: morning, before noon, noon, afternoon, evening and custom hours.
+- Added automatic mowing threshold calculation from cutting height (`20-60 mm`) using the one-third grass blade rule.
+- Kept the manual growth threshold as an advanced fallback for users who want full control.
+- Updated schedule notifications so they show the calculated start threshold and cutting height source.
+
 ## 0.2.2 - 2026-06-12
 
 - Added a Worx Cloud status recovery guard: when RTK shows the mower at the station for 5 minutes while the cloud still reports an active mowing/returning state, the automation starts a 1-minute mowing command and sends the mower back to the dock.

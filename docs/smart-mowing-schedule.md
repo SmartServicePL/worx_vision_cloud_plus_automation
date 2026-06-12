@@ -68,9 +68,11 @@ That value is added to the `input_number` helper. At the configured start times,
 - estimated growth is above the mowing threshold,
 - the minimum number of days since the last full mow has passed.
 
+By default the mowing threshold is calculated from the selected cutting height. The blueprint uses about one third of the target blade height, so a `40 mm` cutting height gives a start threshold of about `13.3 mm`. Users who prefer the older behavior can switch the threshold mode to manual and set the start threshold directly.
+
 When those conditions are met, the automation presses the edge cutting button first. It waits for Worx Cloud to confirm that the mower left the dock, then waits until the mower returns to `docked` or `paused`. After the edge pass, it waits in the dock until the battery reaches the configured post-edge target, which defaults to `100%`. Then it starts normal mowing for the calculated runtime. If Home Assistant does not see the mower leave the dock after the first normal mowing command, the automation sends the start command one more time before treating the run as failed. If rain starts during the edge pass or during post-edge charging, or if the edge pass/charging does not finish before the configured timeout, the automation does not reset the growth helper.
 
-The next planned mowing helper is updated after the daily growth calculation. In automatic mode the planned time is chosen from 15-minute forecast slots over the next few days. Rain, high rain probability, high humidity, wind, temperature far from the useful range, and recent rain all increase the score for a slot, so the automation prefers a dry and sensible mowing moment. In fixed-time mode the helper still follows the configured primary start and backup attempt. If a stored start is missed, a short recurring checker can still start the run within the grace period instead of leaving a stale time in the helper. After a full mowing cycle, the helper is moved forward again based on the reset growth estimate.
+The next planned mowing helper is updated after the daily growth calculation. In automatic mode the planned time is chosen from 15-minute forecast slots over the next few days inside the selected mowing window preset: morning, before noon, noon, afternoon, evening, or custom hours. Rain, high rain probability, high humidity, wind, temperature far from the useful range, and recent rain all increase the score for a slot, so the automation prefers a dry and sensible mowing moment. In fixed-time mode the helper still follows the configured primary start and backup attempt. If a stored start is missed, a short recurring checker can still start the run within the grace period instead of leaving a stale time in the helper. After a full mowing cycle, the helper is moved forward again based on the reset growth estimate.
 
 Runtime is based on lawn size and real mower capacity:
 
@@ -94,8 +96,10 @@ Good first values for most gardens:
 
 - Lawn area: your real mowing area in `m2`.
 - Mower model: select your WORX model, then leave model correction at `100%` for the first week.
-- Start threshold: `8 mm`.
-- Intensive threshold: `14 mm`.
+- Mowing threshold mode: automatic from cutting height.
+- Cutting height: your real mower setting, for example `40 mm`.
+- Manual start threshold: only needed when using manual threshold mode.
+- Intensive threshold: only needed when using manual threshold mode.
 - Automatic irrigation: enable only for regularly watered lawns, start with `130-150%`.
 - Minimum break: `1 day`.
 - Maximum rain in 24 h: `3 mm`.

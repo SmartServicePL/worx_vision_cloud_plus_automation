@@ -2,10 +2,12 @@ blueprint:
   name: Worx Vision Cloud PLUS - inteligentny harmonogram koszenia
   description: |
     Inteligentny harmonogram koszenia dla robotow Worx Vision Cloud PLUS.
-    Wersja automatyzacji: 0.2.1.
+    Wersja automatyzacji: 0.2.3.
 
     Co robi automatyzacja:
     - codziennie szacuje przyrost trawy modelem Growth Potential (GP),
+    - moze liczyc prog startu automatycznie z wysokosci koszenia, zgodnie
+      z zasada okolo 1/3 zdzbla na jedno koszenie,
     - bierze pod uwage temperature, opady, wilgotnosc gleby, UV/slonce,
       podlewanie i nawozenie,
     - zapisuje przyrost trawy, ostatnie koszenie i nastepny planowany termin
@@ -15,6 +17,8 @@ blueprint:
     Jak wybierany jest termin koszenia:
     - w trybie automatycznym automatyzacja szuka najlepszej godziny w wybranym
       oknie czasowym i moze sprawdzac kolejne dni,
+    - uzytkownik moze wybrac proste okno koszenia: rano, przed poludniem,
+      poludnie, popoludnie, wieczor albo wlasne godziny,
     - jesli wybrano encje weather, uzywana jest prognoza godzinowa, zeby
       unikac deszczu, mokrej trawy i czasu zaraz po opadach,
     - w trybie stalej godziny automatyzacja korzysta z ustawionego startu
@@ -205,6 +209,29 @@ blueprint:
               step: 10
               unit_of_measurement: m2
               mode: box
+        growth_threshold_mode:
+          name: Moment startu koszenia
+          description: Automatyczny tryb liczy prog z wysokosci koszenia wedlug zasady okolo 1/3 zdzbla. Tryb reczny uzywa suwaka w ustawieniach zaawansowanych.
+          default: auto_cutting_height
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - label: Automatycznie z wysokosci koszenia
+                  value: auto_cutting_height
+                - label: Reczny prog wzrostu
+                  value: manual
+        cutting_height_mm:
+          name: Wysokosc koszenia
+          description: Docelowa wysokosc trawy ustawiona w kosiarce. Automatyzacja wyliczy z niej prog startu.
+          default: 40
+          selector:
+            number:
+              min: 20
+              max: 60
+              step: 1
+              unit_of_measurement: mm
+              mode: slider
         planning_mode:
           name: Tryb wyboru godziny
           description: Automatycznie wybiera najlepsza godzine z prognozy albo trzyma sie stalej godziny.
@@ -217,15 +244,35 @@ blueprint:
                   value: auto
                 - label: Stala godzina
                   value: fixed
+        mowing_window_preset:
+          name: Preferowane okno koszenia
+          description: Wybierz proste okno czasu. Opcja "Wlasne godziny" uzywa godzin ustawionych ponizej.
+          default: before_noon
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - label: Rano (07:00 - 10:00)
+                  value: morning
+                - label: Przed poludniem (09:00 - 12:00)
+                  value: before_noon
+                - label: Poludnie (11:00 - 14:00)
+                  value: noon
+                - label: Popoludnie (14:00 - 17:00)
+                  value: afternoon
+                - label: Wieczor (17:00 - 20:00)
+                  value: evening
+                - label: Wlasne godziny
+                  value: custom
         primary_start_time:
-          name: Poczatek okna koszenia
-          description: Najwczesniejsza dozwolona godzina startu. W trybie stalej godziny to glowny start.
+          name: Wlasny poczatek okna
+          description: Uzywane przy opcji "Wlasne godziny". W trybie stalej godziny to glowny start.
           default: "10:00:00"
           selector:
             time:
         backup_start_time:
-          name: Koniec okna koszenia
-          description: Najpozniejsza dozwolona godzina startu. W trybie stalej godziny to druga proba.
+          name: Wlasny koniec okna
+          description: Uzywane przy opcji "Wlasne godziny". W trybie stalej godziny to druga proba.
           default: "16:30:00"
           selector:
             time:
@@ -247,8 +294,8 @@ blueprint:
       collapsed: true
       input:
         growth_threshold_mm:
-          name: Prog startu koszenia
-          description: Szacowany przyrost trawy w mm od ostatniego koszenia, po ktorym kosiarka moze wystartowac.
+          name: Reczny prog startu koszenia
+          description: Uzywany tylko wtedy, gdy moment startu koszenia ustawiono na "Reczny prog wzrostu".
           default: 8
           selector:
             number:
@@ -259,7 +306,7 @@ blueprint:
               mode: slider
         high_growth_threshold_mm:
           name: Prog intensywnego koszenia
-          description: Po przekroczeniu tej wartosci harmonogram wydluza pojedynczy cykl.
+          description: W trybie automatycznym jest wyliczany z wysokosci koszenia. Ten suwak dziala tylko przy recznym progu wzrostu.
           default: 14
           selector:
             number:
@@ -488,12 +535,30 @@ variables:
   lawn_area_m2: !input lawn_area_m2
   manual_mower_capacity_m2_per_hour: !input mower_capacity_m2_per_hour
   model_capacity_adjustment_percent: !input model_capacity_adjustment_percent
-  growth_threshold_mm: !input growth_threshold_mm
+  growth_threshold_mode: !input growth_threshold_mode
+  cutting_height_mm: !input cutting_height_mm
+  manual_growth_threshold_mm: !input growth_threshold_mm
+  growth_threshold_mm: >-
+    {% if growth_threshold_mode == 'auto_cutting_height' %}
+      {% set height = cutting_height_mm | float(40) %}
+      {{ (height / 3) | round(1) }}
+    {% else %}
+      {{ manual_growth_threshold_mm }}
+    {% endif %}
   automatic_irrigation_enabled: !input automatic_irrigation_enabled
   irrigation_growth_adjustment_percent: !input irrigation_growth_adjustment_percent
   fertilization_enabled: !input fertilization_enabled
   fertilization_growth_adjustment_percent: !input fertilization_growth_adjustment_percent
-  high_growth_threshold_mm: !input high_growth_threshold_mm
+  manual_high_growth_threshold_mm: !input high_growth_threshold_mm
+  high_growth_threshold_mm: >-
+    {% if growth_threshold_mode == 'auto_cutting_height' %}
+      {% set base = (cutting_height_mm | float(40)) / 3 %}
+      {% set high = base * 1.6 %}
+      {% set min_high = base + 3 %}
+      {% if high < min_high %}{{ min_high | round(1) }}{% else %}{{ high | round(1) }}{% endif %}
+    {% else %}
+      {{ manual_high_growth_threshold_mm }}
+    {% endif %}
   min_days_between_mows: !input min_days_between_mows
   min_battery_percent: !input min_battery_percent
   max_rain_24h_mm: !input max_rain_24h_mm
@@ -506,8 +571,23 @@ variables:
   post_edge_battery_percent: !input post_edge_battery_percent
   post_edge_charge_wait_hours: !input post_edge_charge_wait_hours
   planning_mode: !input planning_mode
-  primary_start_time_value: !input primary_start_time
-  backup_start_time_value: !input backup_start_time
+  mowing_window_preset: !input mowing_window_preset
+  custom_primary_start_time_value: !input primary_start_time
+  custom_backup_start_time_value: !input backup_start_time
+  primary_start_time_value: >-
+    {% if mowing_window_preset == 'morning' %}07:00:00
+    {% elif mowing_window_preset == 'before_noon' %}09:00:00
+    {% elif mowing_window_preset == 'noon' %}11:00:00
+    {% elif mowing_window_preset == 'afternoon' %}14:00:00
+    {% elif mowing_window_preset == 'evening' %}17:00:00
+    {% else %}{{ custom_primary_start_time_value }}{% endif %}
+  backup_start_time_value: >-
+    {% if mowing_window_preset == 'morning' %}10:00:00
+    {% elif mowing_window_preset == 'before_noon' %}12:00:00
+    {% elif mowing_window_preset == 'noon' %}14:00:00
+    {% elif mowing_window_preset == 'afternoon' %}17:00:00
+    {% elif mowing_window_preset == 'evening' %}20:00:00
+    {% else %}{{ custom_backup_start_time_value }}{% endif %}
   auto_planning_step_seconds: 900
   missed_start_grace_minutes: 30
   weather_search_days: 4
@@ -791,7 +871,7 @@ variables:
     {% elif (soil_moisture | float) > (max_soil_moisture_percent | float) %}
       gleba jest zbyt mokra: {{ soil_moisture }}%
     {% elif (estimated_growth_mm | float) < (growth_threshold_mm | float) %}
-      szacowany przyrost trawy to {{ estimated_growth_mm }} mm, a prog startu to {{ growth_threshold_mm }} mm
+      szacowany przyrost trawy to {{ estimated_growth_mm }} mm, a prog startu to {{ growth_threshold_mm }} mm{% if growth_threshold_mode == 'auto_cutting_height' %} (okolo 1/3 z wysokosci koszenia {{ cutting_height_mm }} mm){% endif %}
     {% elif (last_mow_days_ago | float) < (min_days_between_mows | float) %}
       od ostatniego koszenia minelo {{ last_mow_days_ago }} dnia, a minimalna przerwa to {{ min_days_between_mows }} dnia
     {% else %}
@@ -1022,7 +1102,7 @@ actions:
               title: "Worx: zaktualizowano harmonogram"
               message: >-
                 Przyrost dzisiaj: {{ growth_today_mm }} mm. Skumulowany przyrost:
-                {{ new_growth_mm }} mm. Koszenie zaplanowane:
+                {{ new_growth_mm }} mm. Prog startu: {{ growth_threshold_mm }} mm{% if growth_threshold_mode == 'auto_cutting_height' %} (okolo 1/3 z wysokosci koszenia {{ cutting_height_mm }} mm){% endif %}. Koszenie zaplanowane:
                 {{ planned_next_mow_label | trim }}. Dlaczego:
                 {{ planned_next_mow_reason | trim }}.
 

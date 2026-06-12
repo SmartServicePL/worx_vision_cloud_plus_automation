@@ -1,4 +1,6 @@
-# Worx Vision Cloud PLUS Automation
+<p align="center">
+  <img src="assets/worx-vision-cloud-plus-automation.png" alt="Worx Vision Cloud PLUS - Smart Mowing Automation for Home Assistant" width="100%">
+</p>
 
 Home Assistant automation blueprints for Worx Vision Cloud PLUS / Landroid Vision mowers.
 

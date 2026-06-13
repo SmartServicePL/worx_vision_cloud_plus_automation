@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.5 - 2026-06-13
+
+- Rewritten the blueprint description in Polish so it is clearer and more professional for end users.
+- Removed obsolete edge-only, post-edge charging and compatibility inputs from the smart mowing blueprint.
+- Cleaned the planned mowing start flow so it sends exactly one one-time mowing command with edge cutting enabled, waits for confirmation, and retries once if the mower stays docked or paused.
+- Updated start failure and rain notifications to describe the simplified edge-plus-mowing command.
+
 ## 0.2.4 - 2026-06-12
 
 - Simplified the mowing start sequence: planned starts now send one one-time mowing command with edge cutting enabled, without a separate edge-only pass, dock/charge wait, or separate normal mowing command.

@@ -8,8 +8,8 @@ blueprint:
 
     Najważniejsze funkcje:
     - szacowanie dziennego przyrostu trawy modelem Growth Potential (GP),
-    - automatyczny próg startu na podstawie ustawionej wysokości koszenia
-      albo ręczny próg dla użytkowników, którzy wolą pełną kontrolę,
+    - automatyczny próg startu dopasowany do pracy robota koszącego:
+      często, lekko i bez czekania na duży przyrost,
     - wybór najlepszego terminu w prostym oknie czasowym: rano, przed
       południem, południe, popołudnie, wieczór albo własne godziny,
     - uwzględnianie temperatury, opadów, wilgotności gleby, nasłonecznienia,
@@ -24,6 +24,12 @@ blueprint:
       oraz niekorzystnych warunków pogodowych,
     - w trybie stałej godziny działa jak klasyczny harmonogram z główną
       godziną startu i drugą próbą.
+
+    Zasada 1/3 źdźbła:
+    - automatyzacja nie traktuje zasady 1/3 jako progu startu,
+    - dla robota koszącego jest to limit bezpieczeństwa, a nie cel,
+    - normalny start odbywa się przy małym przyroście, zwykle około 2-4 mm,
+      żeby ścinki były drobne i szybko wracały do darni jako naturalny nawóz.
 
     Cykl pracy:
     - po spełnieniu warunków Home Assistant wysyła do kosiarki komendę
@@ -212,19 +218,19 @@ blueprint:
               mode: box
         growth_threshold_mode:
           name: Moment startu koszenia
-          description: Automatyczny tryb liczy prog z wysokosci koszenia wedlug zasady okolo 1/3 zdzbla. Tryb reczny uzywa suwaka w ustawieniach zaawansowanych.
+          description: Automatyczny tryb dobiera niski prog startu dla robota koszacego. Zasada 1/3 zdzbla jest traktowana tylko jako limit bezpieczenstwa, a nie jako prog startu.
           default: auto_cutting_height
           selector:
             select:
               mode: dropdown
               options:
-                - label: Automatycznie z wysokosci koszenia
+                - label: Automatycznie dla robota
                   value: auto_cutting_height
                 - label: Reczny prog wzrostu
                   value: manual
         cutting_height_mm:
           name: Wysokosc koszenia
-          description: Docelowa wysokosc trawy ustawiona w kosiarce. Automatyzacja wyliczy z niej prog startu.
+          description: Docelowa wysokosc trawy ustawiona w kosiarce. Automatyzacja uzywa jej do dobrania malego progu startu i limitu bezpiecznego koszenia.
           default: 40
           selector:
             number:
@@ -297,22 +303,22 @@ blueprint:
         growth_threshold_mm:
           name: Reczny prog startu koszenia
           description: Uzywany tylko wtedy, gdy moment startu koszenia ustawiono na "Reczny prog wzrostu".
-          default: 8
+          default: 3
           selector:
             number:
-              min: 2
-              max: 25
+              min: 1
+              max: 12
               step: 0.5
               unit_of_measurement: mm
               mode: slider
         high_growth_threshold_mm:
           name: Prog intensywnego koszenia
-          description: W trybie automatycznym jest wyliczany z wysokosci koszenia. Ten suwak dziala tylko przy recznym progu wzrostu.
-          default: 14
+          description: W trybie automatycznym jest wyliczany z progu startu i limitu 1/3 wysokosci koszenia. Ten suwak dziala tylko przy recznym progu wzrostu.
+          default: 6
           selector:
             number:
-              min: 5
-              max: 40
+              min: 2
+              max: 25
               step: 0.5
               unit_of_measurement: mm
               mode: slider
@@ -485,7 +491,8 @@ variables:
   growth_threshold_mm: >-
     {% if growth_threshold_mode == 'auto_cutting_height' %}
       {% set height = cutting_height_mm | float(40) %}
-      {{ (height / 3) | round(1) }}
+      {% set threshold = height * 0.075 %}
+      {% if threshold < 2 %}2{% elif threshold > 4.5 %}4.5{% else %}{{ threshold | round(1) }}{% endif %}
     {% else %}
       {{ manual_growth_threshold_mm }}
     {% endif %}
@@ -496,10 +503,9 @@ variables:
   manual_high_growth_threshold_mm: !input high_growth_threshold_mm
   high_growth_threshold_mm: >-
     {% if growth_threshold_mode == 'auto_cutting_height' %}
-      {% set base = (cutting_height_mm | float(40)) / 3 %}
-      {% set high = base * 1.6 %}
-      {% set min_high = base + 3 %}
-      {% if high < min_high %}{{ min_high | round(1) }}{% else %}{{ high | round(1) }}{% endif %}
+      {% set safe_limit = (cutting_height_mm | float(40)) / 3 %}
+      {% set intensive = (growth_threshold_mm | float(3)) * 2 %}
+      {% if intensive > safe_limit %}{{ safe_limit | round(1) }}{% else %}{{ intensive | round(1) }}{% endif %}
     {% else %}
       {{ manual_high_growth_threshold_mm }}
     {% endif %}
@@ -819,7 +825,7 @@ variables:
     {% elif (soil_moisture | float) > (max_soil_moisture_percent | float) %}
       gleba jest zbyt mokra: {{ soil_moisture }}%
     {% elif (estimated_growth_mm | float) < (growth_threshold_mm | float) %}
-      szacowany przyrost trawy to {{ estimated_growth_mm }} mm, a prog startu to {{ growth_threshold_mm }} mm{% if growth_threshold_mode == 'auto_cutting_height' %} (okolo 1/3 z wysokosci koszenia {{ cutting_height_mm }} mm){% endif %}
+      szacowany przyrost trawy to {{ estimated_growth_mm }} mm, a prog startu robota to {{ growth_threshold_mm }} mm{% if growth_threshold_mode == 'auto_cutting_height' %} (czeste koszenie po trochu; limit 1/3 to okolo {{ ((cutting_height_mm | float(40)) / 3) | round(1) }} mm){% endif %}
     {% elif (last_mow_days_ago | float) < (min_days_between_mows | float) %}
       od ostatniego koszenia minelo {{ last_mow_days_ago }} dnia, a minimalna przerwa to {{ min_days_between_mows }} dnia
     {% else %}
@@ -1007,7 +1013,7 @@ actions:
               title: "Worx: zaktualizowano harmonogram"
               message: >-
                 Przyrost dzisiaj: {{ growth_today_mm }} mm. Skumulowany przyrost:
-                {{ new_growth_mm }} mm. Prog startu: {{ growth_threshold_mm }} mm{% if growth_threshold_mode == 'auto_cutting_height' %} (okolo 1/3 z wysokosci koszenia {{ cutting_height_mm }} mm){% endif %}. Koszenie zaplanowane:
+                {{ new_growth_mm }} mm. Prog startu robota: {{ growth_threshold_mm }} mm{% if growth_threshold_mode == 'auto_cutting_height' %} (czeste koszenie po trochu; limit 1/3 to okolo {{ ((cutting_height_mm | float(40)) / 3) | round(1) }} mm){% endif %}. Koszenie zaplanowane:
                 {{ planned_next_mow_label | trim }}. Dlaczego:
                 {{ planned_next_mow_reason | trim }}.
 

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.2.6 - 2026-06-14
+
+- Changed the automatic mowing threshold to a robotic-mowing model: frequent light cuts around 2-4.5 mm of estimated growth, while the one-third blade rule is kept as a safety limit instead of a start threshold.
+- Updated blueprint, README and setup documentation to explain the new robot-oriented mowing logic.
+
 ## 0.2.5 - 2026-06-13
 
 - Rewritten the blueprint description in Polish so it is clearer and more professional for end users.

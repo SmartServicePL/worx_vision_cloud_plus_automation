@@ -24,6 +24,8 @@ blueprint:
       oraz niekorzystnych warunków pogodowych,
     - w trybie stałej godziny działa jak klasyczny harmonogram z główną
       godziną startu i drugą próbą.
+    - gdy przyrost trawy jest wysoki, automatyzacja nie czeka na idealną
+      pogodę kolejnego dnia, tylko wybiera najbliższe bezpieczne okno.
 
     Zasada 1/3 źdźbła:
     - automatyzacja nie traktuje zasady 1/3 jako progu startu,
@@ -469,6 +471,11 @@ triggers:
   - trigger: time_pattern
     id: start_due_check
     minutes: "/5"
+  - trigger: state
+    id: external_mowing_started
+    entity_id: !input mower_entity
+    to: mowing
+    for: "00:10:00"
 
 variables:
   mower_entity: !input mower_entity
@@ -700,6 +707,22 @@ variables:
   new_growth_mm: >-
     {% set raw = (estimated_growth_mm | float) + (growth_today_mm | float) %}
     {% if raw < 0 %}0{% elif raw > 40 %}40{% else %}{{ raw | round(1) }}{% endif %}
+  planning_growth_mm: >-
+    {% if trigger.id == 'update_growth' %}
+      {{ new_growth_mm }}
+    {% else %}
+      {{ estimated_growth_mm }}
+    {% endif %}
+  growth_pressure_ratio: >-
+    {% set threshold = growth_threshold_mm | float(3) %}
+    {% set growth = planning_growth_mm | float(0) %}
+    {% if threshold <= 0 %}0{% else %}{{ (growth / threshold) | round(2) }}{% endif %}
+  forecast_delay_penalty_per_day: >-
+    {% set pressure = growth_pressure_ratio | float(0) %}
+    {% if pressure >= 2 %}2500
+    {% elif pressure >= 1 %}450
+    {% else %}8
+    {% endif %}
   coverage_factor: >-
     {% set threshold = growth_threshold_mm | float %}
     {% set pressure = (estimated_growth_mm | float) / (threshold if threshold > 0 else 0.1) %}
@@ -836,6 +859,60 @@ actions:
   - choose:
       - conditions:
           - condition: template
+            value_template: "{{ trigger.id == 'external_mowing_started' }}"
+          - condition: template
+            value_template: "{{ state_attr(mower_entity, 'rtk_at_station') != true }}"
+        sequence:
+          - wait_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
+            timeout: "04:00:00"
+            continue_on_timeout: false
+          - variables:
+              manual_mow_finished_at: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+              manual_next_mow_datetime: "{{ next_mow_after_reset_datetime | trim }}"
+              manual_next_mow_label: >-
+                {% set raw = next_mow_after_reset_datetime | trim %}
+                {% set ts = as_timestamp(raw) %}
+                {% set target_midnight = as_timestamp((ts | timestamp_custom('%Y-%m-%d', true)) ~ ' 00:00:00') %}
+                {% set today_midnight = as_timestamp(today_at('00:00:00')) %}
+                {% set days = ((target_midnight - today_midnight) / 86400) | round(0) | int %}
+                {% if days <= 0 %}dziś o {{ ts | timestamp_custom('%H:%M', true) }}
+                {% elif days == 1 %}jutro o {{ ts | timestamp_custom('%H:%M', true) }}
+                {% elif days == 2 %}za 2 dni o {{ ts | timestamp_custom('%H:%M', true) }}
+                {% else %}za {{ days }} dni o {{ ts | timestamp_custom('%H:%M', true) }}{% endif %}
+          - action: input_datetime.set_datetime
+            alias: Zapisz reczne koszenie jako ostatnie koszenie
+            target:
+              entity_id: !input last_mow_helper
+            data:
+              datetime: "{{ manual_mow_finished_at }}"
+          - action: input_number.set_value
+            alias: Wyzeruj przyrost po recznym koszeniu
+            target:
+              entity_id: !input growth_helper
+            data:
+              value: 0
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                sequence:
+                  - action: input_datetime.set_datetime
+                    alias: Przelicz nastepne koszenie po recznym koszeniu
+                    target:
+                      entity_id: "{{ next_mow_helper }}"
+                    data:
+                      datetime: "{{ manual_next_mow_datetime }}"
+          - action: persistent_notification.create
+            data:
+              notification_id: "{{ notification_id }}"
+              title: "Worx: zapisano reczne koszenie"
+              message: >-
+                Wykryto koszenie uruchomione poza automatyzacja. Robot kosil
+                co najmniej 10 minut i wrocil do bazy, wiec przyrost trawy
+                zostal wyzerowany. Nastepne koszenie: {{ manual_next_mow_label | trim }}.
+
+      - conditions:
+          - condition: template
             value_template: "{{ trigger.id == 'update_growth' }}"
         sequence:
           - choose:
@@ -905,18 +982,18 @@ actions:
                               {% endif %}
                             {% endif %}
                           {% endfor %}
-                          {% set score = (fc.rain * 500) + (fc.probability * 3) + (((fc.temp - 20) | abs) * 2) + (fc.wind * 0.8) + ((((ts - window_mid) | abs) / 3600) * 1.2) + (((ts - earliest_allowed_ts) / 86400) * 8) %}
+                          {% set score = (fc.rain * 500) + (fc.probability * 3) + (((fc.temp - 20) | abs) * 2) + (fc.wind * 0.8) + ((((ts - window_mid) | abs) / 3600) * 1.2) + (((ts - earliest_allowed_ts) / 86400) * (forecast_delay_penalty_per_day | float(8))) %}
                           {% if fc.seen == 0 %}
                             {% set score = score + 120 %}
                           {% endif %}
                           {% if fc.rain > 0.05 or fc.condition in bad %}
-                            {% set score = score + 1200 %}
+                            {% set score = score + 10000 %}
                           {% endif %}
                           {% if fc.probability > (high_rain_probability_percent | float(60)) %}
-                            {% set score = score + 300 %}
+                            {% set score = score + 2000 %}
                           {% endif %}
                           {% if recent.wet == 1 %}
-                            {% set score = score + 500 + (recent.rain * 150) %}
+                            {% set score = score + 1800 + (recent.rain * 200) %}
                           {% endif %}
                           {% if fc.humidity > (wet_grass_humidity_percent | float(88)) %}
                             {% set score = score + 250 %}
@@ -957,6 +1034,7 @@ actions:
                   {% set items = weather_forecast.get(rain_source_entity, {}).get('forecast', []) %}
                   {% set ts = as_timestamp(planned_next_mow_datetime | trim) %}
                   {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
+                  {% set urgent_growth = (planning_growth_mm | float(0)) >= (high_growth_threshold_mm | float(999)) %}
                   {% set fc = namespace(seen=0, rain=0, probability=0, temp=temp_c | float(10), wind=0, humidity=60, condition='') %}
                   {% set recent = namespace(rain=0, wet=0) %}
                   {% for item in items %}
@@ -983,6 +1061,8 @@ actions:
                     to najbliższy sensowny termin, ale prognoza godzinowa nie ma już dokładnych danych dla tej godziny
                   {% elif fc.rain > 0.05 or fc.condition in bad %}
                     to najbezpieczniejszy dostępny termin w prognozie, mimo że nadal widać ryzyko opadu
+                  {% elif urgent_growth and recent.wet == 0 and fc.humidity <= (wet_grass_humidity_percent | float(88)) %}
+                    przyrost trawy jest wysoki, więc automatyzacja wybrała najbliższe bezpieczne okno zamiast czekać na idealniejsze warunki kolejnego dnia
                   {% elif recent.wet == 1 %}
                     to pierwsze sensowne okno po deszczu; automatyzacja odczekała, żeby trawnik nie był świeżo mokry
                   {% elif fc.humidity > (wet_grass_humidity_percent | float(88)) %}
@@ -1088,18 +1168,18 @@ actions:
                               {% endif %}
                             {% endif %}
                           {% endfor %}
-                          {% set score = (fc.rain * 500) + (fc.probability * 3) + (((fc.temp - 20) | abs) * 2) + (fc.wind * 0.8) + ((((ts - window_mid) | abs) / 3600) * 1.2) + (((ts - earliest_allowed_ts) / 86400) * 8) %}
+                          {% set score = (fc.rain * 500) + (fc.probability * 3) + (((fc.temp - 20) | abs) * 2) + (fc.wind * 0.8) + ((((ts - window_mid) | abs) / 3600) * 1.2) + (((ts - earliest_allowed_ts) / 86400) * (forecast_delay_penalty_per_day | float(8))) %}
                           {% if fc.seen == 0 %}
                             {% set score = score + 120 %}
                           {% endif %}
                           {% if fc.rain > 0.05 or fc.condition in bad %}
-                            {% set score = score + 1200 %}
+                            {% set score = score + 10000 %}
                           {% endif %}
                           {% if fc.probability > (high_rain_probability_percent | float(60)) %}
-                            {% set score = score + 300 %}
+                            {% set score = score + 2000 %}
                           {% endif %}
                           {% if recent.wet == 1 %}
-                            {% set score = score + 500 + (recent.rain * 150) %}
+                            {% set score = score + 1800 + (recent.rain * 200) %}
                           {% endif %}
                           {% if fc.humidity > (wet_grass_humidity_percent | float(88)) %}
                             {% set score = score + 250 %}
@@ -1143,6 +1223,7 @@ actions:
                   {% set items = weather_forecast_at_start.get(rain_source_entity, {}).get('forecast', []) %}
                   {% set ts = as_timestamp(planned_retry_mow_datetime | trim) %}
                   {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
+                  {% set urgent_growth = (planning_growth_mm | float(0)) >= (high_growth_threshold_mm | float(999)) %}
                   {% set fc = namespace(seen=0, rain=0, probability=0, temp=temp_c | float(10), wind=0, humidity=60, condition='') %}
                   {% set recent = namespace(rain=0, wet=0) %}
                   {% for item in items %}
@@ -1169,6 +1250,8 @@ actions:
                     to najbliższy sensowny termin, ale prognoza godzinowa nie ma już dokładnych danych dla tej godziny
                   {% elif fc.rain > 0.05 or fc.condition in bad %}
                     to najbezpieczniejsza następna próba w prognozie, mimo że nadal widać ryzyko opadu
+                  {% elif urgent_growth and recent.wet == 0 and fc.humidity <= (wet_grass_humidity_percent | float(88)) %}
+                    przyrost trawy jest wysoki, więc automatyzacja wybiera najbliższą bezpieczną próbę zamiast czekać na idealniejsze warunki kolejnego dnia
                   {% elif recent.wet == 1 %}
                     automatyzacja przesuwa start po deszczu, żeby nie kosić świeżo mokrego trawnika
                   {% elif fc.humidity > (wet_grass_humidity_percent | float(88)) %}
@@ -1401,13 +1484,13 @@ actions:
                                     {% set score = score + 120 %}
                                   {% endif %}
                                   {% if fc.rain > 0.05 or fc.condition in bad %}
-                                    {% set score = score + 1200 %}
+                                    {% set score = score + 10000 %}
                                   {% endif %}
                                   {% if fc.probability > (high_rain_probability_percent | float(60)) %}
-                                    {% set score = score + 300 %}
+                                    {% set score = score + 2000 %}
                                   {% endif %}
                                   {% if recent.wet == 1 %}
-                                    {% set score = score + 500 + (recent.rain * 150) %}
+                                    {% set score = score + 1800 + (recent.rain * 200) %}
                                   {% endif %}
                                   {% if fc.humidity > (wet_grass_humidity_percent | float(88)) %}
                                     {% set score = score + 250 %}

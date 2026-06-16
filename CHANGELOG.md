@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.7 - 2026-06-16
+
+- Increased the forecast delay penalty when grass growth is already high, so the automation prefers the nearest safe same-day mowing window over ideal weather on a later day.
+- Raised rain and high rain-probability penalties so urgent mowing still never wins over unsafe wet-weather conditions.
+- Updated mowing-planning notifications to explain when high growth makes the automation choose the nearest safe window.
+- Added manual mowing synchronization: if the mower is started outside the automation and mows for at least 10 minutes before returning to the dock, the growth and last-mow helpers are reset.
+
 ## 0.2.6 - 2026-06-14
 
 - Changed the automatic mowing threshold to a robotic-mowing model: frequent light cuts around 2-4.5 mm of estimated growth, while the one-third blade rule is kept as a safety limit instead of a start threshold.

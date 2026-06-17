@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.2.8 - 2026-06-17
+
+- Changed the minimum mow gap logic for whole-day values: `1 day` now means the next calendar day, so daily robotic mowing is preferred when growth, rain, wet-grass and battery conditions are safe.
+
 ## 0.2.7 - 2026-06-16
 
 - Increased the forecast delay penalty when grass growth is already high, so the automation prefers the nearest safe same-day mowing window over ideal weather on a later day.

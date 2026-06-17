@@ -26,6 +26,9 @@ blueprint:
       godziną startu i drugą próbą.
     - gdy przyrost trawy jest wysoki, automatyzacja nie czeka na idealną
       pogodę kolejnego dnia, tylko wybiera najbliższe bezpieczne okno.
+    - przy domyślnej minimalnej przerwie 1 dzień preferowane jest koszenie
+      codzienne: po koszeniu wczoraj robot może kosić dzisiaj, jeśli wzrost,
+      pogoda i wilgotność na to pozwalają.
 
     Zasada 1/3 źdźbła:
     - automatyzacja nie traktuje zasady 1/3 jako progu startu,
@@ -348,7 +351,7 @@ blueprint:
               mode: slider
         min_days_between_mows:
           name: Minimalna przerwa miedzy koszeniami
-          description: Zabezpieczenie przed zbyt czestym uruchamianiem.
+          description: Zabezpieczenie przed zbyt czestym uruchamianiem. Wartosc 1 dzien oznacza kolejny dzien kalendarzowy, zeby robot mogl kosic codziennie, gdy wzrost i pogoda sa odpowiednie.
           default: 1
           selector:
             number:
@@ -642,6 +645,18 @@ variables:
       {% set days = (as_timestamp(now()) - as_timestamp(raw)) / 86400 %}
       {% if days < 0 %}0{% else %}{{ days | round(1) }}{% endif %}
     {% endif %}
+  mowing_gap_ready_ts: >-
+    {% set raw = states(last_mow_helper) %}
+    {% set min_gap = min_days_between_mows | float(1) %}
+    {% if raw in ['unknown', 'unavailable', 'none', ''] or min_gap <= 0 %}
+      0
+    {% elif min_gap < 1 %}
+      {{ as_timestamp(raw) + (min_gap * 86400) }}
+    {% else %}
+      {% set last_ts = as_timestamp(raw) %}
+      {% set last_day_ts = as_timestamp((last_ts | timestamp_custom('%Y-%m-%d', true)) ~ ' 00:00:00') %}
+      {{ last_day_ts + ((min_gap | round(0, 'ceil') | int) * 86400) }}
+    {% endif %}
   temp_factor: >-
     {% set t = temp_c | float %}
     {% if t < 3 %}
@@ -759,11 +774,7 @@ variables:
     {% set backup_ts = as_timestamp(backup) %}
     {% set window_end_ts = backup_ts if backup_ts > primary_ts else primary_ts + 21600 %}
     {% if trigger.id == 'update_growth' %}
-      {% set last_raw = states(last_mow_helper) %}
-      {% set gap_ready_ts = 0 %}
-      {% if last_raw not in ['unknown', 'unavailable', 'none', ''] %}
-        {% set gap_ready_ts = as_timestamp(last_raw) + ((min_days_between_mows | float) * 86400) %}
-      {% endif %}
+      {% set gap_ready_ts = mowing_gap_ready_ts | float(0) %}
       {% set growth_ready_ts = primary_ts + (days_growth * 86400) %}
       {% set earliest_ts = [growth_ready_ts, gap_ready_ts, as_timestamp(now()) + 300] | max %}
       {% set target_date = earliest_ts | timestamp_custom('%Y-%m-%d', true) %}
@@ -779,11 +790,14 @@ variables:
         {{ (target_primary_ts + 86400) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
       {% endif %}
     {% else %}
-      {% set missing_gap = (min_days_between_mows | float) - (last_mow_days_ago | float) %}
-      {% if missing_gap <= 0 %}
+      {% set gap_ready_ts = mowing_gap_ready_ts | float(0) %}
+      {% if gap_ready_ts <= as_timestamp(now()) %}
         {% set days_gap = 0 %}
       {% else %}
-        {% set days_gap = missing_gap | round(0, 'ceil') | int %}
+        {% set today_midnight = as_timestamp(today_at('00:00:00')) %}
+        {% set gap_midnight = as_timestamp((gap_ready_ts | timestamp_custom('%Y-%m-%d', true)) ~ ' 00:00:00') %}
+        {% set days_gap = ((gap_midnight - today_midnight) / 86400) | round(0, 'ceil') | int %}
+        {% if days_gap < 0 %}{% set days_gap = 0 %}{% endif %}
       {% endif %}
       {% set days_ready = days_growth if days_growth > days_gap else days_gap %}
       {% if days_ready <= 0 %}
@@ -849,8 +863,8 @@ variables:
       gleba jest zbyt mokra: {{ soil_moisture }}%
     {% elif (estimated_growth_mm | float) < (growth_threshold_mm | float) %}
       szacowany przyrost trawy to {{ estimated_growth_mm }} mm, a prog startu robota to {{ growth_threshold_mm }} mm{% if growth_threshold_mode == 'auto_cutting_height' %} (czeste koszenie po trochu; limit 1/3 to okolo {{ ((cutting_height_mm | float(40)) / 3) | round(1) }} mm){% endif %}
-    {% elif (last_mow_days_ago | float) < (min_days_between_mows | float) %}
-      od ostatniego koszenia minelo {{ last_mow_days_ago }} dnia, a minimalna przerwa to {{ min_days_between_mows }} dnia
+    {% elif (mowing_gap_ready_ts | float(0)) > as_timestamp(now()) %}
+      od ostatniego koszenia nie minela minimalna przerwa; najwczesniej {{ (mowing_gap_ready_ts | float(0)) | timestamp_custom('%Y-%m-%d %H:%M', true) }}
     {% else %}
       {{ '' }}
     {% endif %}

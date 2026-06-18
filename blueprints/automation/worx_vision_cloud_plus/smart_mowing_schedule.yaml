@@ -38,9 +38,11 @@ blueprint:
 
     Cykl pracy:
     - po spełnieniu warunków Home Assistant wysyła do kosiarki komendę
-      koszenia jednorazowego z włączonym koszeniem krawędzi,
+      normalnego koszenia jednorazowego,
     - automatyzacja sprawdza, czy robot wyjechał z bazy; jeśli nie, ponawia
       komendę jeden raz,
+    - po normalnym koszeniu robot wraca do bazy, a automatyzacja uruchamia
+      osobny przejazd przycinania krawędzi,
     - podczas deszczu robot jest odsyłany do bazy, a koszenie może zostać
       przełożone na kolejny bezpieczny termin,
     - po zakończonym koszeniu aktualizowany jest przyrost trawy, data
@@ -54,6 +56,7 @@ blueprint:
       albo za 2 dni.
 
     Przed uruchomieniem:
+    - zainstaluj integrację Worx Vision Cloud PLUS w wersji 1.0.11 albo nowszej,
     - utwórz trzy helpery Home Assistant: przyrost trawy, ostatnie koszenie
       i następne planowane koszenie,
     - wyłącz harmonogram koszenia w aplikacji WORX, aby robot nie był
@@ -451,7 +454,7 @@ blueprint:
               mode: slider
         mowing_start_confirm_timeout_minutes:
           name: Maksymalny czas potwierdzenia startu koszenia
-          description: Ile minut automatyzacja czeka na wyjazd po komendzie koszenia z krawedziami.
+          description: Ile minut automatyzacja czeka na wyjazd po komendzie normalnego koszenia albo przycinania krawedzi.
           default: 5
           selector:
             number:
@@ -1305,11 +1308,11 @@ actions:
           - variables:
               mowing_cycle_started_at: "{{ current_time_label | trim }}"
           - action: worx_vision_cloud.start_one_time_mowing
-            alias: Uruchom koszenie jednorazowe z krawedziami
+            alias: Uruchom normalne koszenie jednorazowe
             data:
               entity_id: !input mower_entity
               runtime: "{{ normal_mowing_runtime_minutes }}"
-              edge_cut: true
+              edge_cut: false
               zones: []
           - alias: Poczekaj na potwierdzenie wyjazdu do koszenia
             repeat:
@@ -1329,13 +1332,24 @@ actions:
                   - action: lawn_mower.dock
                     target:
                       entity_id: !input mower_entity
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            alias: Zapisz kolejna probe po deszczu przy starcie
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ planned_retry_mow_datetime | trim }}"
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie odlozone"
                       message: >-
                         Koszenie nie zostalo wykonane. Po wyslaniu komendy
-                        koszenia z krawedziami wlaczyl sie czujnik deszczu.
+                        normalnego koszenia wlaczyl sie czujnik deszczu.
                         Następna próba:
                         {{ planned_retry_mow_label | trim }}.
                   - stop: Start koszenia przerwany przez deszcz.
@@ -1344,11 +1358,11 @@ actions:
                     value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
                 sequence:
                   - action: worx_vision_cloud.start_one_time_mowing
-                    alias: Ponow koszenie jednorazowe z krawedziami
+                    alias: Ponow normalne koszenie jednorazowe
                     data:
                       entity_id: !input mower_entity
                       runtime: "{{ normal_mowing_runtime_minutes }}"
-                      edge_cut: true
+                      edge_cut: false
                       zones: []
                   - alias: Poczekaj na potwierdzenie drugiego startu koszenia
                     repeat:
@@ -1368,13 +1382,24 @@ actions:
                   - action: lawn_mower.dock
                     target:
                       entity_id: !input mower_entity
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            alias: Zapisz kolejna probe po deszczu przy ponowieniu
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ planned_retry_mow_datetime | trim }}"
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie odlozone"
                       message: >-
                         Koszenie nie zostalo wykonane. Po ponowieniu komendy
-                        koszenia z krawedziami wlaczyl sie czujnik deszczu.
+                        normalnego koszenia wlaczyl sie czujnik deszczu.
                         Następna próba:
                         {{ planned_retry_mow_label | trim }}.
                   - stop: Start koszenia przerwany przez deszcz po ponowieniu.
@@ -1383,18 +1408,29 @@ actions:
                   - condition: template
                     value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
                 sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            alias: Zapisz kolejna probe po braku startu
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ planned_retry_mow_datetime | trim }}"
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie nie wystartowalo"
                       message: >-
-                        Wyslano komende koszenia jednorazowego z krawedziami,
+                        Wyslano komende normalnego koszenia jednorazowego,
                         ale kosiarka nadal ma stan {{ states(mower_entity) }}
                         po dwoch probach startu. Następna próba:
                         {{ planned_retry_mow_label | trim }}.
                   - stop: Nie potwierdzono startu koszenia po dwoch probach.
           - condition: template
-            alias: Koszenie z krawedziami rozpoczete
+            alias: Normalne koszenie rozpoczete
             value_template: "{{ states(mower_entity) not in ['docked', 'paused'] }}"
           - action: persistent_notification.create
             data:
@@ -1402,8 +1438,9 @@ actions:
               title: "Worx: koszenie rozpoczete"
               message: >-
                 Kosiarka rozpoczęła koszenie {{ current_time_label | trim }}.
-                Wyslano jedna komende koszenia jednorazowego z krawedziami.
-                Planowany czas pracy: {{ normal_mowing_runtime_minutes }} min.
+                Wyslano komende normalnego koszenia jednorazowego.
+                Krawedzie zostana uruchomione osobno po normalnym koszeniu.
+                Planowany czas normalnego koszenia: {{ normal_mowing_runtime_minutes }} min.
           - alias: Koszenie przez wyliczony czas albo do deszczu
             repeat:
               while:
@@ -1421,11 +1458,82 @@ actions:
                   - action: lawn_mower.dock
                     target:
                       entity_id: !input mower_entity
+          - wait_template: "{{ states(mower_entity) in ['docked', 'paused'] or is_state(rain_binary_sensor, 'on') }}"
+            alias: Poczekaj na powrot do bazy przed krawedziami
+            timeout: "00:30:00"
+            continue_on_timeout: true
           - choose:
               - conditions:
                   - condition: template
                     value_template: "{{ is_state(rain_binary_sensor, 'off') }}"
                 sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
+                        sequence:
+                          - action: worx_vision_cloud.start_one_time_mowing
+                            alias: Uruchom przycinanie krawedzi po normalnym koszeniu
+                            data:
+                              entity_id: !input mower_entity
+                              runtime: 0
+                              edge_cut: true
+                              zones: []
+                          - alias: Poczekaj na start przycinania krawedzi
+                            repeat:
+                              while:
+                                - condition: template
+                                  value_template: >-
+                                    {{ states(mower_entity) in ['docked', 'paused']
+                                       and is_state(rain_binary_sensor, 'off')
+                                       and repeat.index <= ((mowing_start_confirm_timeout_minutes | int(5)) * 6) }}
+                              sequence:
+                                - delay: "00:00:10"
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
+                                sequence:
+                                  - action: persistent_notification.create
+                                    data:
+                                      notification_id: "{{ notification_id }}"
+                                      title: "Worx: krawedzie nie wystartowaly"
+                                      message: >-
+                                        Normalne koszenie zostalo wykonane, ale Home Assistant
+                                        nie potwierdzil wyjazdu robota do przycinania krawedzi.
+                                        Przyrost trawy zostanie wyzerowany, bo glowny trawnik
+                                        zostal skoszony.
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ states(mower_entity) not in ['docked', 'paused', 'unavailable', 'unknown'] }}"
+                                sequence:
+                                  - wait_template: "{{ states(mower_entity) in ['docked', 'paused'] or is_state(rain_binary_sensor, 'on') }}"
+                                    alias: Poczekaj na zakonczenie przycinania krawedzi
+                                    timeout: "01:00:00"
+                                    continue_on_timeout: true
+                          - choose:
+                              - conditions:
+                                  - condition: template
+                                    value_template: "{{ is_state(rain_binary_sensor, 'on') and states(mower_entity) not in ['docked', 'paused', 'unavailable', 'unknown'] }}"
+                                sequence:
+                                  - action: lawn_mower.dock
+                                    target:
+                                      entity_id: !input mower_entity
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ states(mower_entity) not in ['docked', 'paused', 'unavailable', 'unknown'] }}"
+                        sequence:
+                          - action: persistent_notification.create
+                            data:
+                              notification_id: "{{ notification_id }}"
+                              title: "Worx: krawedzie pominiete"
+                              message: >-
+                                Normalne koszenie zostalo wykonane, ale robot nie wrocil
+                                do bazy przed etapem krawedzi. Automatyzacja nie wyslala
+                                komendy krawedzi, zeby nie przerywac aktualnego stanu
+                                kosiarki. Przyrost trawy zostanie wyzerowany, bo glowny
+                                trawnik zostal skoszony.
                   - choose:
                       - conditions:
                           - condition: template
@@ -1607,7 +1715,8 @@ actions:
                       message: >-
                         Koszenie wystartowalo {{ mowing_cycle_started_at }} i
                         zakonczylo sie dziś o {{ now().strftime('%H:%M') }}.
-                        Szacowany czas pracy: {{ normal_mowing_runtime_minutes }} min.
+                        Normalne koszenie trwalo okolo {{ normal_mowing_runtime_minutes }} min,
+                        a po nim automatyzacja uruchomila przycinanie krawedzi.
                         Następne koszenie: {{ planned_next_after_reset_label | trim }}.
                         Dlaczego wtedy: {{ planned_next_after_reset_reason | trim }}.
             default:

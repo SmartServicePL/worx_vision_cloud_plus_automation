@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.2.9 - 2026-06-18
+
+- Changed the planned mowing cycle to run normal one-time mowing first and then start a separate edge-only pass after the mower returns to the dock.
+- Fixed planned-start failure paths so the next mowing helper is moved to the calculated retry time when rain or no-start confirmation blocks the run.
+- Guarded the edge-cut step so it is skipped with a notification if the mower does not return to the dock before the edge stage.
+
 ## 0.2.8 - 2026-06-17
 
 - Changed the minimum mow gap logic for whole-day values: `1 day` now means the next calendar day, so daily robotic mowing is preferred when growth, rain, wet-grass and battery conditions are safe.

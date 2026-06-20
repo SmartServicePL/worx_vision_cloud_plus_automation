@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-06-20
+
+- Reordered planned mowing so the verified edge-only command runs first.
+- Added required confirmation that the edge pass finished and the mower returned to the dock.
+- Added an eight-hour charge wait with a fixed minimum battery level of 80% before normal one-time mowing can start.
+- Added clear failure notifications and stopped normal mowing when the edge start, dock return or battery target is not confirmed.
+
 ## 0.2.9 - 2026-06-18
 
 - Changed the planned mowing cycle to run normal one-time mowing first and then start a separate edge-only pass after the mower returns to the dock.

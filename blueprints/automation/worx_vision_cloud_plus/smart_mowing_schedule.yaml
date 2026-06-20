@@ -1,66 +1,46 @@
 blueprint:
   name: Worx Vision Cloud PLUS - inteligentny harmonogram koszenia
   description: |
-    Inteligentny harmonogram koszenia dla robotów Worx Vision Cloud PLUS.
-    Automatyzacja steruje koszeniem z Home Assistant i uruchamia robota wtedy,
-    gdy trawnik faktycznie wymaga przycięcia, a pogoda pozwala na bezpieczną
-    pracę.
+    Kompletny harmonogram koszenia dla robotów Worx Vision Cloud PLUS,
+    sterowany przez Home Assistant. Automatyzacja ocenia rzeczywistą potrzebę
+    koszenia, wybiera bezpieczny termin i prowadzi robota przez cały cykl pracy.
 
-    Najważniejsze funkcje:
-    - szacowanie dziennego przyrostu trawy modelem Growth Potential (GP),
-    - automatyczny próg startu dopasowany do pracy robota koszącego:
-      często, lekko i bez czekania na duży przyrost,
-    - wybór najlepszego terminu w prostym oknie czasowym: rano, przed
-      południem, południe, popołudnie, wieczór albo własne godziny,
-    - uwzględnianie temperatury, opadów, wilgotności gleby, nasłonecznienia,
-      podlewania i nawożenia,
-    - dobór czasu pracy do powierzchni trawnika oraz wydajności wybranego
-      modelu kosiarki.
+    Inteligentne planowanie:
+    - dzienny przyrost trawy jest szacowany modelem Growth Potential (GP),
+    - obliczenia uwzględniają temperaturę, opady, wilgotność gleby,
+      nasłonecznienie oraz opcjonalne podlewanie i nawożenie,
+    - próg startu jest dopasowany do częstego, lekkiego koszenia robotem;
+      zasada 1/3 źdźbła pozostaje limitem bezpieczeństwa, a nie celem,
+    - czas pracy jest dobierany do powierzchni trawnika i wydajności kosiarki.
 
-    Planowanie koszenia:
-    - w trybie automatycznym harmonogram analizuje prognozę godzinową z encji
-      weather i wybiera najkorzystniejszą godzinę w ustawionym oknie,
-    - automatyzacja unika deszczu, świeżo mokrej trawy, wysokiej wilgotności
-      oraz niekorzystnych warunków pogodowych,
-    - w trybie stałej godziny działa jak klasyczny harmonogram z główną
-      godziną startu i drugą próbą.
-    - gdy przyrost trawy jest wysoki, automatyzacja nie czeka na idealną
-      pogodę kolejnego dnia, tylko wybiera najbliższe bezpieczne okno.
-    - przy domyślnej minimalnej przerwie 1 dzień preferowane jest koszenie
-      codzienne: po koszeniu wczoraj robot może kosić dzisiaj, jeśli wzrost,
-      pogoda i wilgotność na to pozwalają.
+    W trybie automatycznym prognoza godzinowa służy do wyboru najlepszego
+    momentu w wybranym oknie czasowym. Automatyzacja preferuje codzienne
+    koszenie, gdy trawa odpowiednio przyrosła, ale unika deszczu, świeżo mokrej
+    trawy i nadmiernej wilgotności. Dostępny jest także tryb stałej godziny
+    z głównym terminem i drugą próbą startu.
 
-    Zasada 1/3 źdźbła:
-    - automatyzacja nie traktuje zasady 1/3 jako progu startu,
-    - dla robota koszącego jest to limit bezpieczeństwa, a nie cel,
-    - normalny start odbywa się przy małym przyroście, zwykle około 2-4 mm,
-      żeby ścinki były drobne i szybko wracały do darni jako naturalny nawóz.
+    Kolejność zaplanowanego cyklu:
+    - najpierw wysyłana jest sprawdzona komenda przycinania samych krawędzi,
+    - Home Assistant potwierdza wyjazd robota; przy braku potwierdzenia komenda
+      jest ponawiana jeden raz,
+    - automatyzacja czeka na zakończenie krawędzi i potwierdzony powrót do bazy,
+    - robot pozostaje w bazie do osiągnięcia co najmniej 80% baterii; maksymalny
+      czas oczekiwania na ładowanie wynosi 8 godzin,
+    - dopiero wtedy wysyłana jest osobna komenda normalnego koszenia
+      jednorazowego z obliczonym czasem pracy.
 
-    Cykl pracy:
-    - po spełnieniu warunków Home Assistant wysyła do kosiarki komendę
-      normalnego koszenia jednorazowego,
-    - automatyzacja sprawdza, czy robot wyjechał z bazy; jeśli nie, ponawia
-      komendę jeden raz,
-    - po normalnym koszeniu robot wraca do bazy, a automatyzacja uruchamia
-      osobny przejazd przycinania krawędzi,
-    - podczas deszczu robot jest odsyłany do bazy, a koszenie może zostać
-      przełożone na kolejny bezpieczny termin,
-    - po zakończonym koszeniu aktualizowany jest przyrost trawy, data
-      ostatniego koszenia i następny planowany termin.
+    Zwykłe koszenie nie zostanie uruchomione, jeśli nie uda się potwierdzić
+    startu krawędzi, powrotu do bazy lub wymaganego poziomu baterii. Deszcz
+    przerywa bezpiecznie cykl i odsyła robota do bazy. Każde uruchomienie,
+    przełożenie, przerwanie i zakończenie tworzy czytelne powiadomienie z
+    przyczyną oraz następnym planowanym terminem, np. dziś, jutro lub za 2 dni.
 
-    Powiadomienia:
-    - użytkownik otrzymuje informację o zaplanowanym koszeniu,
-    - powiadomienie wyjaśnia, dlaczego koszenie zostało uruchomione,
-      odłożone, przerwane albo zakończone,
-    - następny termin jest podawany w czytelnej formie, np. dziś, jutro
-      albo za 2 dni.
-
-    Przed uruchomieniem:
-    - zainstaluj integrację Worx Vision Cloud PLUS w wersji 1.0.11 albo nowszej,
-    - utwórz trzy helpery Home Assistant: przyrost trawy, ostatnie koszenie
-      i następne planowane koszenie,
-    - wyłącz harmonogram koszenia w aplikacji WORX, aby robot nie był
-      uruchamiany równolegle przez aplikację i Home Assistant.
+    Wymagania przed uruchomieniem:
+    - integracja Worx Vision Cloud PLUS 1.0.11 lub nowsza,
+    - trzy helpery Home Assistant: przyrost trawy, ostatnie koszenie oraz
+      następne planowane koszenie,
+    - wyłączony harmonogram w aplikacji WORX, aby aplikacja i Home Assistant
+      nie uruchamiały robota niezależnie od siebie.
   domain: automation
   author: Smart Service
   homeassistant:
@@ -524,6 +504,7 @@ variables:
     {% endif %}
   min_days_between_mows: !input min_days_between_mows
   min_battery_percent: !input min_battery_percent
+  post_edge_battery_percent: 80
   max_rain_24h_mm: !input max_rain_24h_mm
   max_soil_moisture_percent: !input max_soil_moisture_percent
   min_runtime_minutes: !input min_runtime_minutes
@@ -1308,6 +1289,278 @@ actions:
           - variables:
               mowing_cycle_started_at: "{{ current_time_label | trim }}"
           - action: worx_vision_cloud.start_one_time_mowing
+            alias: Uruchom samo przycinanie krawedzi
+            data:
+              entity_id: !input mower_entity
+              runtime: 0
+              edge_cut: true
+              zones: []
+          - alias: Poczekaj na potwierdzenie wyjazdu do krawedzi
+            repeat:
+              while:
+                - condition: template
+                  value_template: >-
+                    {{ states(mower_entity) in ['docked', 'paused']
+                       and is_state(rain_binary_sensor, 'off')
+                       and repeat.index <= ((mowing_start_confirm_timeout_minutes | int(5)) * 6) }}
+              sequence:
+                - delay: "00:00:10"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(rain_binary_sensor, 'on') }}"
+                sequence:
+                  - action: lawn_mower.dock
+                    target:
+                      entity_id: !input mower_entity
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: krawedzie przerwane"
+                      message: >-
+                        Po wyslaniu komendy przycinania krawedzi wlaczyl sie
+                        czujnik deszczu. Robot zostal odeslany do bazy.
+                        Nastepna proba: {{ planned_retry_mow_label | trim }}.
+                  - stop: Przycinanie krawedzi przerwane przez deszcz.
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
+                sequence:
+                  - action: worx_vision_cloud.start_one_time_mowing
+                    alias: Ponow samo przycinanie krawedzi
+                    data:
+                      entity_id: !input mower_entity
+                      runtime: 0
+                      edge_cut: true
+                      zones: []
+                  - alias: Poczekaj na potwierdzenie drugiego startu krawedzi
+                    repeat:
+                      while:
+                        - condition: template
+                          value_template: >-
+                            {{ states(mower_entity) in ['docked', 'paused']
+                               and is_state(rain_binary_sensor, 'off')
+                               and repeat.index <= ((mowing_start_confirm_timeout_minutes | int(5)) * 6) }}
+                      sequence:
+                        - delay: "00:00:10"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(rain_binary_sensor, 'on') }}"
+                sequence:
+                  - action: lawn_mower.dock
+                    target:
+                      entity_id: !input mower_entity
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: krawedzie przerwane"
+                      message: >-
+                        Przy ponowieniu komendy krawedzi wlaczyl sie czujnik
+                        deszczu. Robot zostal odeslany do bazy. Nastepna proba:
+                        {{ planned_retry_mow_label | trim }}.
+                  - stop: Przycinanie krawedzi przerwane przez deszcz po ponowieniu.
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: krawedzie nie wystartowaly"
+                      message: >-
+                        Wyslano dwa razy sprawdzona komende samego przycinania
+                        krawedzi, ale robot nie potwierdzil wyjazdu z bazy.
+                        Zwykle koszenie nie zostanie uruchomione. Nastepna proba:
+                        {{ planned_retry_mow_label | trim }}.
+                  - stop: Nie potwierdzono startu przycinania krawedzi po dwoch probach.
+          - condition: template
+            alias: Przycinanie krawedzi rozpoczete
+            value_template: "{{ states(mower_entity) not in ['docked', 'paused', 'unavailable', 'unknown'] }}"
+          - action: persistent_notification.create
+            data:
+              notification_id: "{{ notification_id }}"
+              title: "Worx: przycinanie krawedzi"
+              message: >-
+                Robot rozpoczal przycinanie krawedzi
+                {{ current_time_label | trim }}. Po powrocie do bazy
+                automatyzacja poczeka na naladowanie baterii do co najmniej
+                {{ post_edge_battery_percent }}% i uruchomi zwykle koszenie.
+          - wait_template: "{{ is_state(mower_entity, 'docked') or is_state(rain_binary_sensor, 'on') }}"
+            alias: Poczekaj na zakonczenie krawedzi i powrot do bazy
+            timeout: "02:00:00"
+            continue_on_timeout: true
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(rain_binary_sensor, 'on') }}"
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                        sequence:
+                          - action: lawn_mower.dock
+                            target:
+                              entity_id: !input mower_entity
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: koszenie odlozone"
+                      message: >-
+                        Deszcz przerwal etap krawedzi. Robot zostal odeslany
+                        do bazy, a zwykle koszenie nie zostanie uruchomione.
+                        Nastepna proba: {{ planned_retry_mow_label | trim }}.
+                  - stop: Deszcz przerwal etap krawedzi.
+              - conditions:
+                  - condition: template
+                    value_template: "{{ not is_state(mower_entity, 'docked') }}"
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ states(mower_entity) not in ['unavailable', 'unknown'] }}"
+                        sequence:
+                          - action: lawn_mower.dock
+                            target:
+                              entity_id: !input mower_entity
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: brak powrotu po krawedziach"
+                      message: >-
+                        Robot nie potwierdzil powrotu do bazy w ciagu 2 godzin
+                        od rozpoczecia krawedzi. Wyslano komende powrotu, ale
+                        zwykle koszenie nie zostanie uruchomione. Nastepna proba:
+                        {{ planned_retry_mow_label | trim }}.
+                  - stop: Nie potwierdzono powrotu do bazy po krawedziach.
+          - wait_template: >-
+              {{ is_state(rain_binary_sensor, 'on')
+                 or not is_state(mower_entity, 'docked')
+                 or (states(battery_sensor) | float(0)) >= (post_edge_battery_percent | float(80)) }}
+            alias: Poczekaj w bazie na naladowanie baterii do 80 procent
+            timeout: "08:00:00"
+            continue_on_timeout: true
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(rain_binary_sensor, 'on') }}"
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: koszenie odlozone"
+                      message: >-
+                        Krawedzie zostaly wykonane, ale podczas ladowania
+                        zaczal padac deszcz. Zwykle koszenie nie wystartuje.
+                        Nastepna proba: {{ planned_retry_mow_label | trim }}.
+                  - stop: Po krawedziach zaczal padac deszcz.
+              - conditions:
+                  - condition: template
+                    value_template: "{{ not is_state(mower_entity, 'docked') }}"
+                sequence:
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: robot opuscil baze"
+                      message: >-
+                        Po wykonaniu krawedzi robot przestal byc w bazie przed
+                        osiagnieciem wymaganego poziomu baterii. Zwykle koszenie
+                        nie zostanie uruchomione.
+                  - stop: Robot opuscil baze podczas ladowania po krawedziach.
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ (states(battery_sensor) | float(0))
+                         < (post_edge_battery_percent | float(80)) }}
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: bateria nie osiagnela 80%"
+                      message: >-
+                        Krawedzie zostaly wykonane, ale po 8 godzinach bateria
+                        ma {{ states(battery_sensor) }}%. Zwykle koszenie nie
+                        wystartuje. Nastepna proba:
+                        {{ planned_retry_mow_label | trim }}.
+                  - stop: Bateria nie osiagnela 80 procent po krawedziach.
+          - condition: template
+            alias: Robot w bazie i bateria minimum 80 procent
+            value_template: >-
+              {{ is_state(mower_entity, 'docked')
+                 and (states(battery_sensor) | float(0)) >= (post_edge_battery_percent | float(80))
+                 and is_state(rain_binary_sensor, 'off') }}
+          - action: worx_vision_cloud.start_one_time_mowing
             alias: Uruchom normalne koszenie jednorazowe
             data:
               entity_id: !input mower_entity
@@ -1438,8 +1691,9 @@ actions:
               title: "Worx: koszenie rozpoczete"
               message: >-
                 Kosiarka rozpoczęła koszenie {{ current_time_label | trim }}.
-                Wyslano komende normalnego koszenia jednorazowego.
-                Krawedzie zostana uruchomione osobno po normalnym koszeniu.
+                Krawedzie zostaly juz wykonane, robot wrocil do bazy i
+                naladowal baterie do {{ states(battery_sensor) }}%.
+                Teraz wyslano komende normalnego koszenia jednorazowego.
                 Planowany czas normalnego koszenia: {{ normal_mowing_runtime_minutes }} min.
           - alias: Koszenie przez wyliczony czas albo do deszczu
             repeat:
@@ -1447,6 +1701,7 @@ actions:
                 - condition: template
                   value_template: >-
                     {{ is_state(rain_binary_sensor, 'off')
+                       and states(mower_entity) not in ['docked', 'paused', 'unavailable', 'unknown']
                        and repeat.index <= (normal_mowing_runtime_minutes | int(60)) }}
               sequence:
                 - delay: "00:01:00"
@@ -1458,82 +1713,17 @@ actions:
                   - action: lawn_mower.dock
                     target:
                       entity_id: !input mower_entity
-          - wait_template: "{{ states(mower_entity) in ['docked', 'paused'] or is_state(rain_binary_sensor, 'on') }}"
-            alias: Poczekaj na powrot do bazy przed krawedziami
+          - wait_template: "{{ is_state(mower_entity, 'docked') or is_state(rain_binary_sensor, 'on') }}"
+            alias: Poczekaj na powrot do bazy po normalnym koszeniu
             timeout: "00:30:00"
             continue_on_timeout: true
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ is_state(rain_binary_sensor, 'off') }}"
+                    value_template: >-
+                      {{ is_state(rain_binary_sensor, 'off')
+                         and is_state(mower_entity, 'docked') }}
                 sequence:
-                  - choose:
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
-                        sequence:
-                          - action: worx_vision_cloud.start_one_time_mowing
-                            alias: Uruchom przycinanie krawedzi po normalnym koszeniu
-                            data:
-                              entity_id: !input mower_entity
-                              runtime: 0
-                              edge_cut: true
-                              zones: []
-                          - alias: Poczekaj na start przycinania krawedzi
-                            repeat:
-                              while:
-                                - condition: template
-                                  value_template: >-
-                                    {{ states(mower_entity) in ['docked', 'paused']
-                                       and is_state(rain_binary_sensor, 'off')
-                                       and repeat.index <= ((mowing_start_confirm_timeout_minutes | int(5)) * 6) }}
-                              sequence:
-                                - delay: "00:00:10"
-                          - choose:
-                              - conditions:
-                                  - condition: template
-                                    value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
-                                sequence:
-                                  - action: persistent_notification.create
-                                    data:
-                                      notification_id: "{{ notification_id }}"
-                                      title: "Worx: krawedzie nie wystartowaly"
-                                      message: >-
-                                        Normalne koszenie zostalo wykonane, ale Home Assistant
-                                        nie potwierdzil wyjazdu robota do przycinania krawedzi.
-                                        Przyrost trawy zostanie wyzerowany, bo glowny trawnik
-                                        zostal skoszony.
-                          - choose:
-                              - conditions:
-                                  - condition: template
-                                    value_template: "{{ states(mower_entity) not in ['docked', 'paused', 'unavailable', 'unknown'] }}"
-                                sequence:
-                                  - wait_template: "{{ states(mower_entity) in ['docked', 'paused'] or is_state(rain_binary_sensor, 'on') }}"
-                                    alias: Poczekaj na zakonczenie przycinania krawedzi
-                                    timeout: "01:00:00"
-                                    continue_on_timeout: true
-                          - choose:
-                              - conditions:
-                                  - condition: template
-                                    value_template: "{{ is_state(rain_binary_sensor, 'on') and states(mower_entity) not in ['docked', 'paused', 'unavailable', 'unknown'] }}"
-                                sequence:
-                                  - action: lawn_mower.dock
-                                    target:
-                                      entity_id: !input mower_entity
-                      - conditions:
-                          - condition: template
-                            value_template: "{{ states(mower_entity) not in ['docked', 'paused', 'unavailable', 'unknown'] }}"
-                        sequence:
-                          - action: persistent_notification.create
-                            data:
-                              notification_id: "{{ notification_id }}"
-                              title: "Worx: krawedzie pominiete"
-                              message: >-
-                                Normalne koszenie zostalo wykonane, ale robot nie wrocil
-                                do bazy przed etapem krawedzi. Automatyzacja nie wyslala
-                                komendy krawedzi, zeby nie przerywac aktualnego stanu
-                                kosiarki. Przyrost trawy zostanie wyzerowany, bo glowny
-                                trawnik zostal skoszony.
                   - choose:
                       - conditions:
                           - condition: template
@@ -1715,8 +1905,11 @@ actions:
                       message: >-
                         Koszenie wystartowalo {{ mowing_cycle_started_at }} i
                         zakonczylo sie dziś o {{ now().strftime('%H:%M') }}.
-                        Normalne koszenie trwalo okolo {{ normal_mowing_runtime_minutes }} min,
-                        a po nim automatyzacja uruchomila przycinanie krawedzi.
+                        Najpierw wykonano przycinanie krawedzi, potem robot
+                        wrocil do bazy i naladowal akumulator do minimum
+                        {{ post_edge_battery_percent }}%, a nastepnie wykonal
+                        normalne koszenie trwajace okolo
+                        {{ normal_mowing_runtime_minutes }} min.
                         Następne koszenie: {{ planned_next_after_reset_label | trim }}.
                         Dlaczego wtedy: {{ planned_next_after_reset_reason | trim }}.
             default:
@@ -1740,7 +1933,13 @@ actions:
                   notification_id: "{{ notification_id }}"
                   title: "Worx: koszenie przerwane"
                   message: >-
-                    Koszenie zostalo przerwane przez deszcz. Przyrost trawy
+                    {% if is_state(rain_binary_sensor, 'on') %}
+                    Normalne koszenie zostalo przerwane przez deszcz.
+                    {% else %}
+                    Po normalnym koszeniu robot nie potwierdzil powrotu do bazy
+                    w wymaganym czasie.
+                    {% endif %}
+                    Przyrost trawy
                     zostal zmniejszony tylko czesciowo do
                     {{ ((estimated_growth_mm | float) * 0.7) | round(1) }} mm.
                     Następna próba: {{ planned_retry_mow_label | trim }}.

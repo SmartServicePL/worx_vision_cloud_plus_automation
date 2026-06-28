@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-06-28
+
+- Added a `22:00-05:00` night mowing preset with a required FiatLux accessory confirmation.
+- Fixed forecast window calculations for mowing windows that cross midnight.
+- Reworked notifications to show clear start, finish, measured duration, postponement reason and next attempt.
+- Added silent condition and forecast refresh every 30 minutes without double-counting grass growth.
+- Kept immediate condition recalculation after completed and postponed mowing cycles.
+- Added configurable minimum and maximum outdoor mowing temperatures, defaulting to `10-25 C`.
+- Automatic forecast planning now rejects slots outside the allowed temperature range.
+- Added hard temperature checks before the edge pass and again before normal mowing after charging.
+- Added postponement notifications that include the measured temperature, allowed limit and next attempt.
+
 ## 0.3.0 - 2026-06-20
 
 - Reordered planned mowing so the verified edge-only command runs first.

@@ -65,6 +65,7 @@ That value is added to the `input_number` helper. At the configured start times,
 
 - the mower is docked or paused,
 - the battery is above the configured minimum,
+- the current outdoor temperature is inside the configured range, `10-25 C` by default,
 - the mower rain sensor is off,
 - rainfall and soil moisture are below configured wet-lawn limits,
 - estimated growth is above the robotic mowing threshold,
@@ -76,7 +77,7 @@ The one-third blade rule is still respected, but only as a safety limit. It mean
 
 When those conditions are met, the automation first sends the dedicated edge-only command. If Home Assistant does not see the mower leave the dock, the edge command is sent one more time. After the edge pass, the automation requires a confirmed `docked` state and waits up to eight hours for the battery to reach at least `80%`. Only then does it send the separate normal one-time mowing command with the calculated runtime, again with one retry if the mower does not leave the dock. If rain starts or any required handoff is not confirmed, normal mowing is not started and Home Assistant reports the reason.
 
-The next planned mowing helper is updated after the daily growth calculation. In automatic mode the planned time is chosen from 15-minute forecast slots over the next few days inside the selected mowing window preset: morning, before noon, noon, afternoon, evening, or custom hours. Rain, high rain probability, high humidity, wind, temperature far from the useful range, and recent rain all increase the score for a slot, so the automation prefers a dry and sensible mowing moment. When estimated growth is already high, delaying by another day gets a much stronger penalty: the automation should choose the nearest safe window instead of waiting for perfect conditions. Current rain and high rain probability still win over urgency, so the mower is not sent out into unsafe wet-weather conditions. The minimum break is calendar-friendly for robot mowing: after a completed mow yesterday, the next daily window can still be used today if the growth threshold and wet-lawn checks are satisfied. In fixed-time mode the helper still follows the configured primary start and backup attempt. If a stored start is missed, a short recurring checker can still start the run within the grace period instead of leaving a stale time in the helper. After a full mowing cycle, the helper is moved forward again based on the reset growth estimate.
+The next planned mowing helper is updated after the daily growth calculation. In automatic mode the planned time is chosen from 15-minute forecast slots over the next few days inside the selected mowing window preset: morning, before noon, noon, afternoon, evening, night, or custom hours. The night preset covers `22:00-05:00`, correctly crosses midnight, and is blocked unless **Czy robot ma zamontowane akcesorium FiatLux?** is enabled. Forecast slots below the minimum or above the maximum mowing temperature are rejected completely. Rain, high rain probability, high humidity, wind, temperature, and recent rain are then used to select the best remaining slot, so the automation prefers a dry and sensible mowing moment. When estimated growth is already high, delaying by another day gets a much stronger penalty: the automation should choose the nearest safe window instead of waiting for perfect conditions. Current rain, unsafe temperature and high rain probability still win over urgency. The temperature is checked once more after the edge pass and battery recharge, before normal mowing starts. Conditions and forecast planning are refreshed silently every 30 minutes without adding grass growth again. They are also recalculated when mowing finishes or is postponed. In fixed-time mode the helper still follows the configured primary start and backup attempt, but the same weather, temperature and FiatLux protections apply.
 
 If the mower is started manually from the WORX app or another control and stays in mowing state for at least 10 minutes, the blueprint treats it as a completed manual mowing cycle after the mower returns to the dock. It then resets the estimated growth helper, updates the last-mow helper and moves the next planned mowing helper forward. This keeps Home Assistant's grass-growth model in sync even when a user starts the mower outside the automation.
 
@@ -108,6 +109,8 @@ Good first values for most gardens:
 - Intensive threshold: only needed when using manual threshold mode; start around twice the manual start threshold.
 - Automatic irrigation: enable only for regularly watered lawns, start with `130-150%`.
 - Minimum break: `1 day`.
+- Mowing temperature: leave the default `10-25 C` unless local lawn conditions require a narrower range.
+- Night mowing: select `22:00-05:00` only when the mower has the FiatLux accessory and enable the FiatLux confirmation switch.
 - Maximum rain in 24 h: `3 mm`.
 - Maximum soil moisture: leave `100%` when soil moisture should only help with growth estimation. Use `70-75%` only if a real lawn probe should block mowing on wet soil.
 

@@ -9,6 +9,8 @@ blueprint:
     - dzienny przyrost trawy jest szacowany modelem Growth Potential (GP),
     - obliczenia uwzględniają temperaturę, opady, wilgotność gleby,
       nasłonecznienie oraz opcjonalne podlewanie i nawożenie,
+    - robot może rozpocząć pracę tylko w ustawionym zakresie temperatur;
+      domyślnie od 10°C do 25°C,
     - próg startu jest dopasowany do częstego, lekkiego koszenia robotem;
       zasada 1/3 źdźbła pozostaje limitem bezpieczeństwa, a nie celem,
     - czas pracy jest dobierany do powierzchni trawnika i wydajności kosiarki.
@@ -16,8 +18,10 @@ blueprint:
     W trybie automatycznym prognoza godzinowa służy do wyboru najlepszego
     momentu w wybranym oknie czasowym. Automatyzacja preferuje codzienne
     koszenie, gdy trawa odpowiednio przyrosła, ale unika deszczu, świeżo mokrej
-    trawy i nadmiernej wilgotności. Dostępny jest także tryb stałej godziny
-    z głównym terminem i drugą próbą startu.
+    trawy, nadmiernej wilgotności oraz temperatury poza ustawionym zakresem.
+    Dostępny jest także tryb stałej godziny z głównym terminem i drugą próbą
+    startu. Okno nocne działa od 22:00 do 05:00 i wymaga potwierdzenia, że robot
+    ma zamontowane akcesorium oświetleniowe FiatLux.
 
     Kolejność zaplanowanego cyklu:
     - najpierw wysyłana jest sprawdzona komenda przycinania samych krawędzi,
@@ -26,14 +30,17 @@ blueprint:
     - automatyzacja czeka na zakończenie krawędzi i potwierdzony powrót do bazy,
     - robot pozostaje w bazie do osiągnięcia co najmniej 80% baterii; maksymalny
       czas oczekiwania na ładowanie wynosi 8 godzin,
+    - temperatura jest sprawdzana ponownie po ładowaniu,
     - dopiero wtedy wysyłana jest osobna komenda normalnego koszenia
       jednorazowego z obliczonym czasem pracy.
 
     Zwykłe koszenie nie zostanie uruchomione, jeśli nie uda się potwierdzić
-    startu krawędzi, powrotu do bazy lub wymaganego poziomu baterii. Deszcz
-    przerywa bezpiecznie cykl i odsyła robota do bazy. Każde uruchomienie,
-    przełożenie, przerwanie i zakończenie tworzy czytelne powiadomienie z
-    przyczyną oraz następnym planowanym terminem, np. dziś, jutro lub za 2 dni.
+    startu krawędzi, powrotu do bazy, wymaganego poziomu baterii lub bezpiecznej
+    temperatury. Deszcz przerywa bezpiecznie cykl i odsyła robota do bazy.
+    Powiadomienia pokazują godzinę startu i zakończenia, rzeczywisty czas
+    koszenia oraz następny termin. Przy przełożeniu podawany jest krótki powód
+    i termin kolejnej próby. Warunki oraz prognoza są przeliczane po zakończeniu
+    lub przełożeniu koszenia, a dodatkowo odświeżane co 30 minut.
 
     Wymagania przed uruchomieniem:
     - integracja Worx Vision Cloud PLUS 1.0.11 lub nowsza,
@@ -257,8 +264,16 @@ blueprint:
                   value: afternoon
                 - label: Wieczor (17:00 - 20:00)
                   value: evening
+                - label: Noc (22:00 - 05:00)
+                  value: night
                 - label: Wlasne godziny
                   value: custom
+        fiatlux_installed:
+          name: Czy robot ma zamontowane akcesorium FiatLux?
+          description: Zaznacz tylko wtedy, gdy robot ma oswietlenie FiatLux. Jest wymagane dla okna nocnego 22:00-05:00.
+          default: false
+          selector:
+            boolean:
         primary_start_time:
           name: Wlasny poczatek okna
           description: Uzywane przy opcji "Wlasne godziny". W trybie stalej godziny to glowny start.
@@ -410,6 +425,28 @@ blueprint:
               step: 5
               unit_of_measurement: "%"
               mode: slider
+        min_mowing_temperature_c:
+          name: Minimalna temperatura koszenia
+          description: Ponizej tej temperatury koszenie zostanie przelozone na cieplejszy termin.
+          default: 10
+          selector:
+            number:
+              min: 0
+              max: 20
+              step: 1
+              unit_of_measurement: "°C"
+              mode: slider
+        max_mowing_temperature_c:
+          name: Maksymalna temperatura koszenia
+          description: Powyzej tej temperatury koszenie zostanie przelozone na chlodniejszy termin.
+          default: 25
+          selector:
+            number:
+              min: 20
+              max: 40
+              step: 1
+              unit_of_measurement: "°C"
+              mode: slider
         max_rain_24h_mm:
           name: Maksymalny opad 24 h dla startu
           description: Jesli spadlo wiecej deszczu, koszenie zostanie odlozone.
@@ -457,6 +494,10 @@ triggers:
   - trigger: time_pattern
     id: start_due_check
     minutes: "/5"
+  - trigger: time_pattern
+    id: refresh_conditions
+    minutes: "/30"
+    seconds: 15
   - trigger: state
     id: external_mowing_started
     entity_id: !input mower_entity
@@ -504,6 +545,8 @@ variables:
     {% endif %}
   min_days_between_mows: !input min_days_between_mows
   min_battery_percent: !input min_battery_percent
+  min_mowing_temperature_c: !input min_mowing_temperature_c
+  max_mowing_temperature_c: !input max_mowing_temperature_c
   post_edge_battery_percent: 80
   max_rain_24h_mm: !input max_rain_24h_mm
   max_soil_moisture_percent: !input max_soil_moisture_percent
@@ -512,6 +555,7 @@ variables:
   mowing_start_confirm_timeout_minutes: !input mowing_start_confirm_timeout_minutes
   planning_mode: !input planning_mode
   mowing_window_preset: !input mowing_window_preset
+  fiatlux_installed: !input fiatlux_installed
   custom_primary_start_time_value: !input primary_start_time
   custom_backup_start_time_value: !input backup_start_time
   primary_start_time_value: >-
@@ -520,6 +564,7 @@ variables:
     {% elif mowing_window_preset == 'noon' %}11:00:00
     {% elif mowing_window_preset == 'afternoon' %}14:00:00
     {% elif mowing_window_preset == 'evening' %}17:00:00
+    {% elif mowing_window_preset == 'night' %}22:00:00
     {% else %}{{ custom_primary_start_time_value }}{% endif %}
   backup_start_time_value: >-
     {% if mowing_window_preset == 'morning' %}10:00:00
@@ -527,6 +572,7 @@ variables:
     {% elif mowing_window_preset == 'noon' %}14:00:00
     {% elif mowing_window_preset == 'afternoon' %}17:00:00
     {% elif mowing_window_preset == 'evening' %}20:00:00
+    {% elif mowing_window_preset == 'night' %}05:00:00
     {% else %}{{ custom_backup_start_time_value }}{% endif %}
   auto_planning_step_seconds: 900
   missed_start_grace_minutes: 30
@@ -756,7 +802,8 @@ variables:
     {% set backup = today_at(backup_start_time_value) %}
     {% set primary_ts = as_timestamp(primary) %}
     {% set backup_ts = as_timestamp(backup) %}
-    {% set window_end_ts = backup_ts if backup_ts > primary_ts else primary_ts + 21600 %}
+    {% set crosses_midnight = backup_ts <= primary_ts %}
+    {% set window_end_ts = backup_ts if backup_ts > primary_ts else backup_ts + 86400 %}
     {% if trigger.id == 'update_growth' %}
       {% set gap_ready_ts = mowing_gap_ready_ts | float(0) %}
       {% set growth_ready_ts = primary_ts + (days_growth * 86400) %}
@@ -764,7 +811,7 @@ variables:
       {% set target_date = earliest_ts | timestamp_custom('%Y-%m-%d', true) %}
       {% set target_primary_ts = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) %}
       {% set target_raw_window_end_ts = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
-      {% set target_window_end_ts = target_raw_window_end_ts if target_raw_window_end_ts > target_primary_ts else target_primary_ts + 21600 %}
+      {% set target_window_end_ts = target_raw_window_end_ts if target_raw_window_end_ts > target_primary_ts else target_raw_window_end_ts + 86400 %}
       {% if earliest_ts <= target_primary_ts %}
         {{ target_primary_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
       {% elif earliest_ts <= target_window_end_ts %}
@@ -785,13 +832,17 @@ variables:
       {% endif %}
       {% set days_ready = days_growth if days_growth > days_gap else days_gap %}
       {% if days_ready <= 0 %}
-      {% if as_timestamp(now()) < as_timestamp(primary) %}
-        {{ as_timestamp(primary) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
-      {% elif as_timestamp(now()) < as_timestamp(backup) %}
-        {{ as_timestamp(backup) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
-      {% else %}
-        {{ (as_timestamp(primary) + 86400) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
-      {% endif %}
+        {% set now_ts = as_timestamp(now()) %}
+        {% if crosses_midnight and (now_ts < backup_ts or now_ts >= primary_ts) %}
+          {% set selected_ts = (((now_ts + 300) / 60) | round(0, 'ceil') | int) * 60 %}
+          {{ selected_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+        {% elif now_ts < primary_ts %}
+          {{ primary_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+        {% elif not crosses_midnight and now_ts < backup_ts %}
+          {{ backup_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+        {% else %}
+          {{ (primary_ts + 86400) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+        {% endif %}
       {% else %}
         {{ (as_timestamp(primary) + (days_ready * 86400)) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
       {% endif %}
@@ -835,10 +886,25 @@ variables:
     {{ (as_timestamp(today_at(primary_start_time_value)) + (days_ready * 86400)) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
   start_block_reason: >-
     {% set stale_at_station = (mower_cloud_stale_at_station | string | lower) == 'true' %}
+    {% set temperature_state = states(temperature_source_entity) %}
+    {% set weather_temperature = state_attr(temperature_source_entity, 'temperature') %}
+    {% if temperature_source_entity.split('.')[0] == 'weather' %}
+      {% set temperature_available = weather_temperature is not none %}
+    {% else %}
+      {% set temperature_available = temperature_state not in ['unknown', 'unavailable', 'none', ''] %}
+    {% endif %}
     {% if states(mower_entity) != 'docked' and not stale_at_station %}
       kosiarka nie jest w bazie, aktualny stan: {{ states(mower_entity) }}. Stare reczne koszenie nie bedzie wznawiane automatycznie
+    {% elif mowing_window_preset == 'night' and not (fiatlux_installed | bool) %}
+      wybrano koszenie nocne, ale nie potwierdzono zamontowanego akcesorium FiatLux
     {% elif (states(battery_sensor) | float(0)) < (min_battery_percent | float) %}
       bateria ma {{ states(battery_sensor) }}%, a wymagane minimum to {{ min_battery_percent }}%
+    {% elif not temperature_available %}
+      nie mozna odczytac aktualnej temperatury zewnetrznej
+    {% elif (temp_c | float) < (min_mowing_temperature_c | float) %}
+      temperatura wynosi {{ temp_c | round(1) }} st. C i jest nizsza od minimalnej temperatury koszenia {{ min_mowing_temperature_c }} st. C
+    {% elif (temp_c | float) > (max_mowing_temperature_c | float) %}
+      temperatura wynosi {{ temp_c | round(1) }} st. C i przekracza maksymalna temperature koszenia {{ max_mowing_temperature_c }} st. C
     {% elif is_state(rain_binary_sensor, 'on') %}
       czujnik deszczu kosiarki jest aktywny
     {% elif (rain_mm | float) > (max_rain_24h_mm | float) %}
@@ -861,11 +927,18 @@ actions:
           - condition: template
             value_template: "{{ state_attr(mower_entity, 'rtk_at_station') != true }}"
         sequence:
+          - variables:
+              manual_mow_started_ts: "{{ as_timestamp(trigger.to_state.last_changed) }}"
+              manual_mow_started_at: >-
+                {{ as_timestamp(trigger.to_state.last_changed) | timestamp_custom('%d.%m %H:%M', true) }}
           - wait_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
             timeout: "04:00:00"
             continue_on_timeout: false
           - variables:
               manual_mow_finished_at: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+              manual_mow_finished_label: "{{ now().strftime('%d.%m %H:%M') }}"
+              manual_mow_duration_minutes: >-
+                {{ ((((as_timestamp(now()) | float) - (manual_mow_started_ts | float)) / 60) | round(0)) | int }}
               manual_next_mow_datetime: "{{ next_mow_after_reset_datetime | trim }}"
               manual_next_mow_label: >-
                 {% set raw = next_mow_after_reset_datetime | trim %}
@@ -903,15 +976,16 @@ actions:
           - action: persistent_notification.create
             data:
               notification_id: "{{ notification_id }}"
-              title: "Worx: zapisano reczne koszenie"
+              title: "Worx: koszenie ręczne zakończone"
               message: >-
-                Wykryto koszenie uruchomione poza automatyzacja. Robot kosil
-                co najmniej 10 minut i wrocil do bazy, wiec przyrost trawy
-                zostal wyzerowany. Nastepne koszenie: {{ manual_next_mow_label | trim }}.
+                Start: {{ manual_mow_started_at }}.
+                Koniec: {{ manual_mow_finished_label }}.
+                Czas koszenia: {{ manual_mow_duration_minutes }} min.
+                Następne: {{ manual_next_mow_label | trim }}.
 
       - conditions:
           - condition: template
-            value_template: "{{ trigger.id == 'update_growth' }}"
+            value_template: "{{ trigger.id in ['update_growth', 'refresh_conditions'] }}"
         sequence:
           - choose:
               - conditions:
@@ -943,13 +1017,18 @@ actions:
                   {% if horizon.max > 0 %}
                     {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
                     {% set ns = namespace(best_ts=0, best_score=999999) %}
-                    {% set first_day = earliest_allowed_ts | timestamp_custom('%Y-%m-%d', true) %}
+                    {% set first_day_ts = earliest_allowed_ts %}
+                    {% set earliest_clock = earliest_allowed_ts | timestamp_custom('%H:%M:%S', true) %}
+                    {% if backup_start_time_value <= primary_start_time_value and earliest_clock < backup_start_time_value %}
+                      {% set first_day_ts = earliest_allowed_ts - 86400 %}
+                    {% endif %}
+                    {% set first_day = first_day_ts | timestamp_custom('%Y-%m-%d', true) %}
                     {% for day in range(0, weather_search_days | int(4)) %}
                       {% set day_ts = as_timestamp(first_day ~ ' 00:00:00') + (day * 86400) %}
                       {% set target_date = day_ts | timestamp_custom('%Y-%m-%d', true) %}
                       {% set window_start = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) %}
                       {% set raw_window_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
-                      {% set window_end = raw_window_end if raw_window_end > window_start else window_start + 21600 %}
+                      {% set window_end = raw_window_end if raw_window_end > window_start else raw_window_end + 86400 %}
                       {% set search_end = [window_end, horizon.max + 3600] | min %}
                       {% set start_ts = [window_start, earliest_allowed_ts] | max %}
                       {% if start_ts <= search_end %}
@@ -998,7 +1077,10 @@ actions:
                           {% elif fc.humidity > 82 %}
                             {% set score = score + 80 %}
                           {% endif %}
-                          {% if score < ns.best_score %}
+                          {% if fc.seen == 1
+                                and fc.temp >= (min_mowing_temperature_c | float(10))
+                                and fc.temp <= (max_mowing_temperature_c | float(25))
+                                and score < ns.best_score %}
                             {% set ns.best_score = score %}
                             {% set ns.best_ts = ts %}
                           {% endif %}
@@ -1057,6 +1139,10 @@ actions:
                   {% endfor %}
                   {% if fc.seen == 0 %}
                     to najbliższy sensowny termin, ale prognoza godzinowa nie ma już dokładnych danych dla tej godziny
+                  {% elif fc.temp < (min_mowing_temperature_c | float(10)) %}
+                    prognozowana temperatura {{ fc.temp | round(1) }} st. C jest nizsza od zalecanego minimum {{ min_mowing_temperature_c }} st. C, wiec termin moze zostac przesuniety
+                  {% elif fc.temp > (max_mowing_temperature_c | float(25)) %}
+                    prognozowana temperatura {{ fc.temp | round(1) }} st. C przekracza zalecane maksimum {{ max_mowing_temperature_c }} st. C, wiec termin moze zostac przesuniety
                   {% elif fc.rain > 0.05 or fc.condition in bad %}
                     to najbezpieczniejszy dostępny termin w prognozie, mimo że nadal widać ryzyko opadu
                   {% elif urgent_growth and recent.wet == 0 and fc.humidity <= (wet_grass_humidity_percent | float(88)) %}
@@ -1070,11 +1156,16 @@ actions:
                   {% endif %}
                   (ryzyko deszczu {{ fc.probability | round(0) }}%, opad {{ fc.rain | round(1) }} mm, wilgotność {{ fc.humidity | round(0) }}%, temperatura {{ fc.temp | round(0) }} st. C)
                 {% endif %}
-          - action: input_number.set_value
-            target:
-              entity_id: !input growth_helper
-            data:
-              value: "{{ new_growth_mm }}"
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ trigger.id == 'update_growth' }}"
+                sequence:
+                  - action: input_number.set_value
+                    target:
+                      entity_id: !input growth_helper
+                    data:
+                      value: "{{ new_growth_mm }}"
           - choose:
               - conditions:
                   - condition: template
@@ -1085,15 +1176,20 @@ actions:
                       entity_id: "{{ next_mow_helper }}"
                     data:
                       datetime: "{{ planned_next_mow_datetime | trim }}"
-          - action: persistent_notification.create
-            data:
-              notification_id: "{{ notification_id }}"
-              title: "Worx: zaktualizowano harmonogram"
-              message: >-
-                Przyrost dzisiaj: {{ growth_today_mm }} mm. Skumulowany przyrost:
-                {{ new_growth_mm }} mm. Prog startu robota: {{ growth_threshold_mm }} mm{% if growth_threshold_mode == 'auto_cutting_height' %} (czeste koszenie po trochu; limit 1/3 to okolo {{ ((cutting_height_mm | float(40)) / 3) | round(1) }} mm){% endif %}. Koszenie zaplanowane:
-                {{ planned_next_mow_label | trim }}. Dlaczego:
-                {{ planned_next_mow_reason | trim }}.
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ trigger.id == 'update_growth' }}"
+                sequence:
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: zaplanowano koszenie"
+                      message: >-
+                        Termin: {{ planned_next_mow_label | trim }}.
+                        Powod: {{ planned_next_mow_reason | trim }}.
+                        Przyrost: {{ new_growth_mm }} mm, prog:
+                        {{ growth_threshold_mm }} mm.
 
       - conditions:
           - condition: template
@@ -1129,13 +1225,18 @@ actions:
                   {% if horizon.max > 0 %}
                     {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
                     {% set ns = namespace(best_ts=0, best_score=999999) %}
-                    {% set first_day = earliest_allowed_ts | timestamp_custom('%Y-%m-%d', true) %}
+                    {% set first_day_ts = earliest_allowed_ts %}
+                    {% set earliest_clock = earliest_allowed_ts | timestamp_custom('%H:%M:%S', true) %}
+                    {% if backup_start_time_value <= primary_start_time_value and earliest_clock < backup_start_time_value %}
+                      {% set first_day_ts = earliest_allowed_ts - 86400 %}
+                    {% endif %}
+                    {% set first_day = first_day_ts | timestamp_custom('%Y-%m-%d', true) %}
                     {% for day in range(0, weather_search_days | int(4)) %}
                       {% set day_ts = as_timestamp(first_day ~ ' 00:00:00') + (day * 86400) %}
                       {% set target_date = day_ts | timestamp_custom('%Y-%m-%d', true) %}
                       {% set window_start = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) %}
                       {% set raw_window_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
-                      {% set window_end = raw_window_end if raw_window_end > window_start else window_start + 21600 %}
+                      {% set window_end = raw_window_end if raw_window_end > window_start else raw_window_end + 86400 %}
                       {% set search_end = [window_end, horizon.max + 3600] | min %}
                       {% set start_ts = [window_start, earliest_allowed_ts] | max %}
                       {% if start_ts <= search_end %}
@@ -1184,7 +1285,10 @@ actions:
                           {% elif fc.humidity > 82 %}
                             {% set score = score + 80 %}
                           {% endif %}
-                          {% if score < ns.best_score %}
+                          {% if fc.seen == 1
+                                and fc.temp >= (min_mowing_temperature_c | float(10))
+                                and fc.temp <= (max_mowing_temperature_c | float(25))
+                                and score < ns.best_score %}
                             {% set ns.best_score = score %}
                             {% set ns.best_ts = ts %}
                           {% endif %}
@@ -1246,6 +1350,10 @@ actions:
                   {% endfor %}
                   {% if fc.seen == 0 %}
                     to najbliższy sensowny termin, ale prognoza godzinowa nie ma już dokładnych danych dla tej godziny
+                  {% elif fc.temp < (min_mowing_temperature_c | float(10)) %}
+                    prognozowana temperatura {{ fc.temp | round(1) }} st. C jest nizsza od zalecanego minimum {{ min_mowing_temperature_c }} st. C, dlatego automatyzacja bedzie szukac cieplejszej godziny
+                  {% elif fc.temp > (max_mowing_temperature_c | float(25)) %}
+                    prognozowana temperatura {{ fc.temp | round(1) }} st. C przekracza zalecane maksimum {{ max_mowing_temperature_c }} st. C, dlatego automatyzacja bedzie szukac chlodniejszej godziny
                   {% elif fc.rain > 0.05 or fc.condition in bad %}
                     to najbezpieczniejsza następna próba w prognozie, mimo że nadal widać ryzyko opadu
                   {% elif urgent_growth and recent.wet == 0 and fc.humidity <= (wet_grass_humidity_percent | float(88)) %}
@@ -1279,15 +1387,15 @@ actions:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie odlozone"
+                      title: "Worx: koszenie przełożone"
                       message: >-
-                        Koszenie pominięte {{ current_time_label | trim }}.
-                        Dlaczego: {{ start_block_reason | trim }}.
+                        Planowany start: {{ current_time_label | trim }}.
+                        Powód: {{ start_block_reason | trim }}.
                         Następna próba: {{ planned_retry_mow_label | trim }}.
-                        Dlaczego wtedy: {{ planned_retry_mow_reason | trim }}.
                   - stop: Warunki koszenia nie sa spelnione; przesunieto nastepne koszenie.
           - variables:
-              mowing_cycle_started_at: "{{ current_time_label | trim }}"
+              mowing_cycle_started_at: "{{ now().strftime('%d.%m %H:%M') }}"
+              mowing_cycle_started_ts: "{{ as_timestamp(now()) }}"
           - action: worx_vision_cloud.start_one_time_mowing
             alias: Uruchom samo przycinanie krawedzi
             data:
@@ -1326,11 +1434,11 @@ actions:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: krawedzie przerwane"
+                      title: "Worx: koszenie przełożone"
                       message: >-
-                        Po wyslaniu komendy przycinania krawedzi wlaczyl sie
-                        czujnik deszczu. Robot zostal odeslany do bazy.
-                        Nastepna proba: {{ planned_retry_mow_label | trim }}.
+                        Powód: deszcz podczas uruchamiania krawędzi.
+                        Robot wraca do bazy.
+                        Następna próba: {{ planned_retry_mow_label | trim }}.
                   - stop: Przycinanie krawedzi przerwane przez deszcz.
               - conditions:
                   - condition: template
@@ -1374,11 +1482,11 @@ actions:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: krawedzie przerwane"
+                      title: "Worx: koszenie przełożone"
                       message: >-
-                        Przy ponowieniu komendy krawedzi wlaczyl sie czujnik
-                        deszczu. Robot zostal odeslany do bazy. Nastepna proba:
-                        {{ planned_retry_mow_label | trim }}.
+                        Powód: deszcz podczas ponownego uruchamiania krawędzi.
+                        Robot wraca do bazy.
+                        Następna próba: {{ planned_retry_mow_label | trim }}.
                   - stop: Przycinanie krawedzi przerwane przez deszcz po ponowieniu.
               - conditions:
                   - condition: template
@@ -1397,25 +1505,26 @@ actions:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: krawedzie nie wystartowaly"
+                      title: "Worx: koszenie przełożone"
                       message: >-
-                        Wyslano dwa razy sprawdzona komende samego przycinania
-                        krawedzi, ale robot nie potwierdzil wyjazdu z bazy.
-                        Zwykle koszenie nie zostanie uruchomione. Nastepna proba:
+                        Powód: robot nie potwierdził startu krawędzi po dwóch
+                        próbach. Następna próba:
                         {{ planned_retry_mow_label | trim }}.
                   - stop: Nie potwierdzono startu przycinania krawedzi po dwoch probach.
           - condition: template
             alias: Przycinanie krawedzi rozpoczete
             value_template: "{{ states(mower_entity) not in ['docked', 'paused', 'unavailable', 'unknown'] }}"
+          - variables:
+              edge_mowing_started_ts: "{{ as_timestamp(now()) }}"
           - action: persistent_notification.create
             data:
               notification_id: "{{ notification_id }}"
-              title: "Worx: przycinanie krawedzi"
+              title: "Worx: koszenie rozpoczęte"
               message: >-
-                Robot rozpoczal przycinanie krawedzi
-                {{ current_time_label | trim }}. Po powrocie do bazy
-                automatyzacja poczeka na naladowanie baterii do co najmniej
-                {{ post_edge_battery_percent }}% i uruchomi zwykle koszenie.
+                Start: {{ mowing_cycle_started_at }}.
+                Etap: przycinanie krawędzi.
+                Następnie robot wróci do bazy, naładuje baterię do
+                {{ post_edge_battery_percent }}% i rozpocznie zwykłe koszenie.
           - wait_template: "{{ is_state(mower_entity, 'docked') or is_state(rain_binary_sensor, 'on') }}"
             alias: Poczekaj na zakonczenie krawedzi i powrot do bazy
             timeout: "02:00:00"
@@ -1446,11 +1555,11 @@ actions:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie odlozone"
+                      title: "Worx: koszenie przełożone"
                       message: >-
-                        Deszcz przerwal etap krawedzi. Robot zostal odeslany
-                        do bazy, a zwykle koszenie nie zostanie uruchomione.
-                        Nastepna proba: {{ planned_retry_mow_label | trim }}.
+                        Start: {{ mowing_cycle_started_at }}.
+                        Powód: deszcz przerwał przycinanie krawędzi.
+                        Następna próba: {{ planned_retry_mow_label | trim }}.
                   - stop: Deszcz przerwal etap krawedzi.
               - conditions:
                   - condition: template
@@ -1477,13 +1586,15 @@ actions:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: brak powrotu po krawedziach"
+                      title: "Worx: koszenie przełożone"
                       message: >-
-                        Robot nie potwierdzil powrotu do bazy w ciagu 2 godzin
-                        od rozpoczecia krawedzi. Wyslano komende powrotu, ale
-                        zwykle koszenie nie zostanie uruchomione. Nastepna proba:
+                        Start: {{ mowing_cycle_started_at }}.
+                        Powód: robot nie wrócił do bazy po krawędziach.
+                        Następna próba:
                         {{ planned_retry_mow_label | trim }}.
                   - stop: Nie potwierdzono powrotu do bazy po krawedziach.
+          - variables:
+              edge_mowing_finished_ts: "{{ as_timestamp(now()) }}"
           - wait_template: >-
               {{ is_state(rain_binary_sensor, 'on')
                  or not is_state(mower_entity, 'docked')
@@ -1509,24 +1620,36 @@ actions:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie odlozone"
+                      title: "Worx: koszenie przełożone"
                       message: >-
-                        Krawedzie zostaly wykonane, ale podczas ladowania
-                        zaczal padac deszcz. Zwykle koszenie nie wystartuje.
-                        Nastepna proba: {{ planned_retry_mow_label | trim }}.
+                        Start: {{ mowing_cycle_started_at }}.
+                        Powód: po krawędziach, podczas ładowania, zaczął padać
+                        deszcz. Następna próba:
+                        {{ planned_retry_mow_label | trim }}.
                   - stop: Po krawedziach zaczal padac deszcz.
               - conditions:
                   - condition: template
                     value_template: "{{ not is_state(mower_entity, 'docked') }}"
                 sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ planned_retry_mow_datetime | trim }}"
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: robot opuscil baze"
+                      title: "Worx: koszenie przełożone"
                       message: >-
-                        Po wykonaniu krawedzi robot przestal byc w bazie przed
-                        osiagnieciem wymaganego poziomu baterii. Zwykle koszenie
-                        nie zostanie uruchomione.
+                        Start: {{ mowing_cycle_started_at }}.
+                        Powód: robot opuścił bazę podczas ładowania po
+                        krawędziach. Następna próba:
+                        {{ planned_retry_mow_label | trim }}.
                   - stop: Robot opuscil baze podczas ladowania po krawedziach.
               - conditions:
                   - condition: template
@@ -1547,18 +1670,88 @@ actions:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: bateria nie osiagnela 80%"
+                      title: "Worx: koszenie przełożone"
                       message: >-
-                        Krawedzie zostaly wykonane, ale po 8 godzinach bateria
-                        ma {{ states(battery_sensor) }}%. Zwykle koszenie nie
-                        wystartuje. Nastepna proba:
+                        Start: {{ mowing_cycle_started_at }}.
+                        Powód: bateria nie osiągnęła 80% w ciągu 8 godzin
+                        (aktualnie {{ states(battery_sensor) }}%).
+                        Następna próba:
                         {{ planned_retry_mow_label | trim }}.
                   - stop: Bateria nie osiagnela 80 procent po krawedziach.
+          - variables:
+              temperature_after_edges_c: >-
+                {% if temperature_source_entity.split('.')[0] == 'weather' %}
+                  {{ state_attr(temperature_source_entity, 'temperature') | float(-99) }}
+                {% else %}
+                  {{ states(temperature_source_entity) | float(-99) }}
+                {% endif %}
+          - variables:
+              temperature_after_edges_block_reason: >-
+                {% set temperature_state = states(temperature_source_entity) %}
+                {% set weather_temperature = state_attr(temperature_source_entity, 'temperature') %}
+                {% if temperature_source_entity.split('.')[0] == 'weather' %}
+                  {% set temperature_available = weather_temperature is not none %}
+                {% else %}
+                  {% set temperature_available = temperature_state not in ['unknown', 'unavailable', 'none', ''] %}
+                {% endif %}
+                {% if not temperature_available %}
+                  nie mozna odczytac aktualnej temperatury zewnetrznej
+                {% elif (temperature_after_edges_c | float(-99)) < (min_mowing_temperature_c | float(10)) %}
+                  temperatura wynosi {{ temperature_after_edges_c | float | round(1) }} st. C i jest nizsza od wymaganego minimum {{ min_mowing_temperature_c }} st. C
+                {% elif (temperature_after_edges_c | float(-99)) > (max_mowing_temperature_c | float(25)) %}
+                  temperatura wynosi {{ temperature_after_edges_c | float | round(1) }} st. C i przekracza dozwolone maksimum {{ max_mowing_temperature_c }} st. C
+                {% else %}
+                  {{ '' }}
+                {% endif %}
+              temperature_retry_datetime: >-
+                {% set retry_ts = as_timestamp(planned_retry_mow_datetime | trim) %}
+                {% if retry_ts > (as_timestamp(now()) + 300) %}
+                  {{ retry_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+                {% else %}
+                  {{ (as_timestamp(today_at(primary_start_time_value)) + 86400) | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+                {% endif %}
+          - variables:
+              temperature_retry_label: >-
+                {% set ts = as_timestamp(temperature_retry_datetime | trim) %}
+                {% set target_midnight = as_timestamp((ts | timestamp_custom('%Y-%m-%d', true)) ~ ' 00:00:00') %}
+                {% set today_midnight = as_timestamp(today_at('00:00:00')) %}
+                {% set days = ((target_midnight - today_midnight) / 86400) | round(0) | int %}
+                {% if days <= 0 %}dzis o {{ ts | timestamp_custom('%H:%M', true) }}
+                {% elif days == 1 %}jutro o {{ ts | timestamp_custom('%H:%M', true) }}
+                {% elif days == 2 %}za 2 dni o {{ ts | timestamp_custom('%H:%M', true) }}
+                {% else %}za {{ days }} dni o {{ ts | timestamp_custom('%H:%M', true) }}{% endif %}
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (temperature_after_edges_block_reason | trim | length) > 0 }}"
+                sequence:
+                  - choose:
+                      - conditions:
+                          - condition: template
+                            value_template: "{{ (next_mow_helper | default('', true) | length) > 0 }}"
+                        sequence:
+                          - action: input_datetime.set_datetime
+                            target:
+                              entity_id: "{{ next_mow_helper }}"
+                            data:
+                              datetime: "{{ temperature_retry_datetime | trim }}"
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "Worx: koszenie przełożone"
+                      message: >-
+                        Start: {{ mowing_cycle_started_at }}.
+                        Powód:
+                        {{ temperature_after_edges_block_reason | trim }}.
+                        Następna próba: {{ temperature_retry_label | trim }}.
+                  - stop: Temperatura po krawedziach jest poza zakresem koszenia.
           - condition: template
-            alias: Robot w bazie i bateria minimum 80 procent
+            alias: Robot w bazie, bateria minimum 80 procent i bezpieczna temperatura
             value_template: >-
               {{ is_state(mower_entity, 'docked')
                  and (states(battery_sensor) | float(0)) >= (post_edge_battery_percent | float(80))
+                 and (temperature_after_edges_c | float(-99)) >= (min_mowing_temperature_c | float(10))
+                 and (temperature_after_edges_c | float(-99)) <= (max_mowing_temperature_c | float(25))
                  and is_state(rain_binary_sensor, 'off') }}
           - action: worx_vision_cloud.start_one_time_mowing
             alias: Uruchom normalne koszenie jednorazowe
@@ -1599,10 +1792,10 @@ actions:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie odlozone"
+                      title: "Worx: koszenie przełożone"
                       message: >-
-                        Koszenie nie zostalo wykonane. Po wyslaniu komendy
-                        normalnego koszenia wlaczyl sie czujnik deszczu.
+                        Start: {{ mowing_cycle_started_at }}.
+                        Powód: deszcz przed startem zwykłego koszenia.
                         Następna próba:
                         {{ planned_retry_mow_label | trim }}.
                   - stop: Start koszenia przerwany przez deszcz.
@@ -1649,11 +1842,11 @@ actions:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie odlozone"
+                      title: "Worx: koszenie przełożone"
                       message: >-
-                        Koszenie nie zostalo wykonane. Po ponowieniu komendy
-                        normalnego koszenia wlaczyl sie czujnik deszczu.
-                        Następna próba:
+                        Start: {{ mowing_cycle_started_at }}.
+                        Powód: deszcz podczas ponownego startu zwykłego
+                        koszenia. Następna próba:
                         {{ planned_retry_mow_label | trim }}.
                   - stop: Start koszenia przerwany przez deszcz po ponowieniu.
           - choose:
@@ -1675,26 +1868,29 @@ actions:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie nie wystartowalo"
+                      title: "Worx: koszenie przełożone"
                       message: >-
-                        Wyslano komende normalnego koszenia jednorazowego,
-                        ale kosiarka nadal ma stan {{ states(mower_entity) }}
-                        po dwoch probach startu. Następna próba:
+                        Start: {{ mowing_cycle_started_at }}.
+                        Powód: zwykłe koszenie nie wystartowało po dwóch
+                        próbach (stan: {{ states(mower_entity) }}).
+                        Następna próba:
                         {{ planned_retry_mow_label | trim }}.
                   - stop: Nie potwierdzono startu koszenia po dwoch probach.
           - condition: template
             alias: Normalne koszenie rozpoczete
             value_template: "{{ states(mower_entity) not in ['docked', 'paused'] }}"
+          - variables:
+              normal_mowing_started_at: "{{ now().strftime('%d.%m %H:%M') }}"
+              normal_mowing_started_ts: "{{ as_timestamp(now()) }}"
           - action: persistent_notification.create
             data:
               notification_id: "{{ notification_id }}"
-              title: "Worx: koszenie rozpoczete"
+              title: "Worx: trwa koszenie"
               message: >-
-                Kosiarka rozpoczęła koszenie {{ current_time_label | trim }}.
-                Krawedzie zostaly juz wykonane, robot wrocil do bazy i
-                naladowal baterie do {{ states(battery_sensor) }}%.
-                Teraz wyslano komende normalnego koszenia jednorazowego.
-                Planowany czas normalnego koszenia: {{ normal_mowing_runtime_minutes }} min.
+                Start cyklu: {{ mowing_cycle_started_at }}.
+                Krawędzie zakończone.
+                Zwykłe koszenie rozpoczęte: {{ normal_mowing_started_at }}.
+                Bateria: {{ states(battery_sensor) }}%.
           - alias: Koszenie przez wyliczony czas albo do deszczu
             repeat:
               while:
@@ -1705,6 +1901,8 @@ actions:
                        and repeat.index <= (normal_mowing_runtime_minutes | int(60)) }}
               sequence:
                 - delay: "00:01:00"
+          - variables:
+              normal_mowing_finished_ts: "{{ as_timestamp(now()) }}"
           - choose:
               - conditions:
                   - condition: template
@@ -1717,6 +1915,29 @@ actions:
             alias: Poczekaj na powrot do bazy po normalnym koszeniu
             timeout: "00:30:00"
             continue_on_timeout: true
+          - variables:
+              mowing_cycle_finished_at: "{{ now().strftime('%d.%m %H:%M') }}"
+              edge_mowing_minutes: >-
+                {{ ((((edge_mowing_finished_ts | float) - (edge_mowing_started_ts | float)) / 60) | round(0)) | int }}
+              normal_mowing_minutes: >-
+                {{ ((((normal_mowing_finished_ts | float) - (normal_mowing_started_ts | float)) / 60) | round(0)) | int }}
+              whole_cycle_minutes: >-
+                {{ ((((as_timestamp(now()) | float) - (mowing_cycle_started_ts | float)) / 60) | round(0)) | int }}
+          - variables:
+              mowing_duration_label: >-
+                {% set total = (edge_mowing_minutes | int) + (normal_mowing_minutes | int) %}
+                {% if total >= 60 %}
+                  {{ total // 60 }} godz. {{ total % 60 }} min
+                {% else %}
+                  {{ total }} min
+                {% endif %}
+              whole_cycle_duration_label: >-
+                {% set total = whole_cycle_minutes | int %}
+                {% if total >= 60 %}
+                  {{ total // 60 }} godz. {{ total % 60 }} min
+                {% else %}
+                  {{ total }} min
+                {% endif %}
           - choose:
               - conditions:
                   - condition: template
@@ -1754,13 +1975,18 @@ actions:
                           {% if horizon.max > 0 %}
                             {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
                             {% set ns = namespace(best_ts=0, best_score=999999) %}
-                            {% set first_day = earliest_allowed_ts | timestamp_custom('%Y-%m-%d', true) %}
+                            {% set first_day_ts = earliest_allowed_ts %}
+                            {% set earliest_clock = earliest_allowed_ts | timestamp_custom('%H:%M:%S', true) %}
+                            {% if backup_start_time_value <= primary_start_time_value and earliest_clock < backup_start_time_value %}
+                              {% set first_day_ts = earliest_allowed_ts - 86400 %}
+                            {% endif %}
+                            {% set first_day = first_day_ts | timestamp_custom('%Y-%m-%d', true) %}
                             {% for day in range(0, weather_search_days | int(4)) %}
                               {% set day_ts = as_timestamp(first_day ~ ' 00:00:00') + (day * 86400) %}
                               {% set target_date = day_ts | timestamp_custom('%Y-%m-%d', true) %}
                               {% set window_start = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) %}
                               {% set raw_window_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
-                              {% set window_end = raw_window_end if raw_window_end > window_start else window_start + 21600 %}
+                              {% set window_end = raw_window_end if raw_window_end > window_start else raw_window_end + 86400 %}
                               {% set search_end = [window_end, horizon.max + 3600] | min %}
                               {% set start_ts = [window_start, earliest_allowed_ts] | max %}
                               {% if start_ts <= search_end %}
@@ -1809,7 +2035,10 @@ actions:
                                   {% elif fc.humidity > 82 %}
                                     {% set score = score + 80 %}
                                   {% endif %}
-                                  {% if score < ns.best_score %}
+                                  {% if fc.seen == 1
+                                        and fc.temp >= (min_mowing_temperature_c | float(10))
+                                        and fc.temp <= (max_mowing_temperature_c | float(25))
+                                        and score < ns.best_score %}
                                     {% set ns.best_score = score %}
                                     {% set ns.best_ts = ts %}
                                   {% endif %}
@@ -1867,6 +2096,10 @@ actions:
                           {% endfor %}
                           {% if fc.seen == 0 %}
                             to najbliższy sensowny termin, ale prognoza godzinowa nie ma już dokładnych danych dla tej godziny
+                          {% elif fc.temp < (min_mowing_temperature_c | float(10)) %}
+                            prognozowana temperatura {{ fc.temp | round(1) }} st. C jest nizsza od zalecanego minimum {{ min_mowing_temperature_c }} st. C, wiec termin moze zostac przesuniety
+                          {% elif fc.temp > (max_mowing_temperature_c | float(25)) %}
+                            prognozowana temperatura {{ fc.temp | round(1) }} st. C przekracza zalecane maksimum {{ max_mowing_temperature_c }} st. C, wiec termin moze zostac przesuniety
                           {% elif fc.rain > 0.05 or fc.condition in bad %}
                             to najbezpieczniejszy dostępny termin w prognozie, mimo że nadal widać ryzyko opadu
                           {% elif recent.wet == 1 %}
@@ -1901,17 +2134,15 @@ actions:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie wykonane"
+                      title: "Worx: koszenie zakończone"
                       message: >-
-                        Koszenie wystartowalo {{ mowing_cycle_started_at }} i
-                        zakonczylo sie dziś o {{ now().strftime('%H:%M') }}.
-                        Najpierw wykonano przycinanie krawedzi, potem robot
-                        wrocil do bazy i naladowal akumulator do minimum
-                        {{ post_edge_battery_percent }}%, a nastepnie wykonal
-                        normalne koszenie trwajace okolo
-                        {{ normal_mowing_runtime_minutes }} min.
-                        Następne koszenie: {{ planned_next_after_reset_label | trim }}.
-                        Dlaczego wtedy: {{ planned_next_after_reset_reason | trim }}.
+                        Start: {{ mowing_cycle_started_at }}.
+                        Koniec: {{ mowing_cycle_finished_at }}.
+                        Czas koszenia: {{ mowing_duration_label | trim }}
+                        (krawędzie {{ edge_mowing_minutes }} min, zwykłe
+                        {{ normal_mowing_minutes }} min).
+                        Cały cykl z ładowaniem: {{ whole_cycle_duration_label | trim }}.
+                        Następne: {{ planned_next_after_reset_label | trim }}.
             default:
               - action: input_number.set_value
                 target:
@@ -1933,14 +2164,12 @@ actions:
                   notification_id: "{{ notification_id }}"
                   title: "Worx: koszenie przerwane"
                   message: >-
+                    Start: {{ mowing_cycle_started_at }}.
+                    Koniec: {{ mowing_cycle_finished_at }}.
+                    Czas pracy: {{ mowing_duration_label | trim }}.
                     {% if is_state(rain_binary_sensor, 'on') %}
-                    Normalne koszenie zostalo przerwane przez deszcz.
+                    Powód: deszcz.
                     {% else %}
-                    Po normalnym koszeniu robot nie potwierdzil powrotu do bazy
-                    w wymaganym czasie.
+                    Powód: robot nie potwierdził powrotu do bazy.
                     {% endif %}
-                    Przyrost trawy
-                    zostal zmniejszony tylko czesciowo do
-                    {{ ((estimated_growth_mm | float) * 0.7) | round(1) }} mm.
                     Następna próba: {{ planned_retry_mow_label | trim }}.
-                    Dlaczego wtedy: {{ planned_retry_mow_reason | trim }}.

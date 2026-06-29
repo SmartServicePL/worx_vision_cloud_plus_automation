@@ -990,7 +990,7 @@ actions:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ planning_mode == 'auto' and rain_source_entity.split('.')[0] == 'weather' }}"
+                    value_template: "{{ rain_source_entity.split('.')[0] == 'weather' }}"
                 sequence:
                   - action: weather.get_forecasts
                     target:
@@ -998,6 +998,14 @@ actions:
                     data:
                       type: hourly
                     response_variable: weather_forecast
+          - variables:
+              previous_next_mow_datetime: >-
+                {% if (next_mow_helper | default('', true) | length) > 0
+                      and states(next_mow_helper) not in ['unknown', 'unavailable', 'none', ''] %}
+                  {{ states(next_mow_helper) }}
+                {% else %}
+                  unknown
+                {% endif %}
           - variables:
               planned_next_mow_datetime: >-
                 {% set fallback = stable_next_mow_datetime | trim %}
@@ -1016,7 +1024,7 @@ actions:
                   {% endfor %}
                   {% if horizon.max > 0 %}
                     {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
-                    {% set ns = namespace(best_ts=0, best_score=999999) %}
+                    {% set ns = namespace(preferred_ts=0, preferred_score=999999, fallback_ts=0, fallback_score=999999) %}
                     {% set first_day_ts = earliest_allowed_ts %}
                     {% set earliest_clock = earliest_allowed_ts | timestamp_custom('%H:%M:%S', true) %}
                     {% if backup_start_time_value <= primary_start_time_value and earliest_clock < backup_start_time_value %}
@@ -1026,13 +1034,20 @@ actions:
                     {% for day in range(0, weather_search_days | int(4)) %}
                       {% set day_ts = as_timestamp(first_day ~ ' 00:00:00') + (day * 86400) %}
                       {% set target_date = day_ts | timestamp_custom('%Y-%m-%d', true) %}
-                      {% set window_start = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) %}
-                      {% set raw_window_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
-                      {% set window_end = raw_window_end if raw_window_end > window_start else raw_window_end + 86400 %}
-                      {% set search_end = [window_end, horizon.max + 3600] | min %}
-                      {% set start_ts = [window_start, earliest_allowed_ts] | max %}
+                      {% set preferred_start = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) %}
+                      {% set raw_preferred_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
+                      {% set preferred_end = raw_preferred_end if raw_preferred_end > preferred_start else raw_preferred_end + 86400 %}
+                      {% if mowing_window_preset == 'night' %}
+                        {% set search_start = preferred_start %}
+                        {% set raw_search_end = preferred_end %}
+                      {% else %}
+                        {% set search_start = as_timestamp(target_date ~ ' 06:00:00') %}
+                        {% set raw_search_end = as_timestamp(target_date ~ ' 22:00:00') %}
+                      {% endif %}
+                      {% set search_end = [raw_search_end, horizon.max + 3600] | min %}
+                      {% set start_ts = [search_start, earliest_allowed_ts] | max %}
                       {% if start_ts <= search_end %}
-                        {% set window_mid = ((window_start + window_end) / 2) %}
+                        {% set window_mid = ((preferred_start + preferred_end) / 2) %}
                         {% set first_slot = ((start_ts / step) | round(0, 'ceil') | int) * step %}
                         {% set slots = [(((search_end - first_slot) / step) | round(0, 'floor') | int) + 1, 0] | max %}
                         {% for slot in range(0, slots) %}
@@ -1077,18 +1092,30 @@ actions:
                           {% elif fc.humidity > 82 %}
                             {% set score = score + 80 %}
                           {% endif %}
-                          {% if fc.seen == 1
-                                and fc.temp >= (min_mowing_temperature_c | float(10))
-                                and fc.temp <= (max_mowing_temperature_c | float(25))
-                                and score < ns.best_score %}
-                            {% set ns.best_score = score %}
-                            {% set ns.best_ts = ts %}
+                          {% set safe = fc.seen == 1
+                              and fc.temp >= (min_mowing_temperature_c | float(10))
+                              and fc.temp <= (max_mowing_temperature_c | float(25))
+                              and fc.rain <= 0.05
+                              and fc.condition not in bad
+                              and fc.probability <= (high_rain_probability_percent | float(60))
+                              and recent.wet == 0
+                              and fc.humidity <= (wet_grass_humidity_percent | float(88))
+                              and (mowing_window_preset != 'night' or (fiatlux_installed | bool)) %}
+                          {% if safe and score < ns.fallback_score %}
+                            {% set ns.fallback_score = score %}
+                            {% set ns.fallback_ts = ts %}
+                          {% endif %}
+                          {% if safe and ts >= preferred_start and ts <= preferred_end and score < ns.preferred_score %}
+                            {% set ns.preferred_score = score %}
+                            {% set ns.preferred_ts = ts %}
                           {% endif %}
                         {% endfor %}
                       {% endif %}
                     {% endfor %}
-                    {% if ns.best_ts > 0 %}
-                      {{ ns.best_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+                    {% if ns.preferred_ts > 0 %}
+                      {{ ns.preferred_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+                    {% elif ns.fallback_ts > 0 %}
+                      {{ ns.fallback_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
                     {% else %}
                       {{ fallback }}
                     {% endif %}
@@ -1137,6 +1164,12 @@ actions:
                       {% endif %}
                     {% endif %}
                   {% endfor %}
+                  {% set selected_clock = ts | timestamp_custom('%H:%M:%S', true) %}
+                  {% if backup_start_time_value <= primary_start_time_value %}
+                    {% set inside_preferred_window = selected_clock >= primary_start_time_value or selected_clock <= backup_start_time_value %}
+                  {% else %}
+                    {% set inside_preferred_window = selected_clock >= primary_start_time_value and selected_clock <= backup_start_time_value %}
+                  {% endif %}
                   {% if fc.seen == 0 %}
                     to najbliższy sensowny termin, ale prognoza godzinowa nie ma już dokładnych danych dla tej godziny
                   {% elif fc.temp < (min_mowing_temperature_c | float(10)) %}
@@ -1145,6 +1178,8 @@ actions:
                     prognozowana temperatura {{ fc.temp | round(1) }} st. C przekracza zalecane maksimum {{ max_mowing_temperature_c }} st. C, wiec termin moze zostac przesuniety
                   {% elif fc.rain > 0.05 or fc.condition in bad %}
                     to najbezpieczniejszy dostępny termin w prognozie, mimo że nadal widać ryzyko opadu
+                  {% elif not inside_preferred_window %}
+                    to najbliższa bezpieczna godzina poza preferowanym oknem; w wybranym oknie nie ma warunków spełniających temperaturę, opad i wilgotność
                   {% elif urgent_growth and recent.wet == 0 and fc.humidity <= (wet_grass_humidity_percent | float(88)) %}
                     przyrost trawy jest wysoki, więc automatyzacja wybrała najbliższe bezpieczne okno zamiast czekać na idealniejsze warunki kolejnego dnia
                   {% elif recent.wet == 1 %}
@@ -1154,7 +1189,60 @@ actions:
                   {% else %}
                     prognoza pokazuje brak deszczu, przerwę po opadach i najniższe ryzyko mokrej trawy w wybranym oknie
                   {% endif %}
-                  (ryzyko deszczu {{ fc.probability | round(0) }}%, opad {{ fc.rain | round(1) }} mm, wilgotność {{ fc.humidity | round(0) }}%, temperatura {{ fc.temp | round(0) }} st. C)
+                {% endif %}
+              planned_next_mow_forecast: >-
+                {% if weather_forecast is not defined %}
+                  unknown;brak prognozy godzinowej dla wskazanego terminu
+                {% else %}
+                  {% set items = weather_forecast.get(rain_source_entity, {}).get('forecast', []) %}
+                  {% set ts = as_timestamp(planned_next_mow_datetime | trim) %}
+                  {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
+                  {% set fc = namespace(seen=0, rain=0, probability=0, temp=temp_c | float(10), humidity=60, condition='') %}
+                  {% set recent = namespace(wet=0) %}
+                  {% for item in items %}
+                    {% set item_ts = as_timestamp(item.datetime) %}
+                    {% if item_ts <= ts and item_ts > (ts - 3600) %}
+                      {% set fc.seen = 1 %}
+                      {% set fc.rain = item.precipitation | default(0) | float(0) %}
+                      {% set fc.probability = item.precipitation_probability | default(0) | float(0) %}
+                      {% set fc.temp = item.temperature | default(temp_c) | float(temp_c) %}
+                      {% set fc.humidity = item.humidity | default(60) | float(60) %}
+                      {% set fc.condition = item.condition | default('') %}
+                    {% endif %}
+                    {% if item_ts <= ts and item_ts > (ts - ((dry_after_rain_hours | int(3)) * 3600)) %}
+                      {% if (item.precipitation | default(0) | float(0)) > 0.05 or (item.condition | default('')) in bad %}
+                        {% set recent.wet = 1 %}
+                      {% endif %}
+                    {% endif %}
+                  {% endfor %}
+                  {% set safe = fc.seen == 1
+                      and fc.temp >= (min_mowing_temperature_c | float(10))
+                      and fc.temp <= (max_mowing_temperature_c | float(25))
+                      and fc.rain <= 0.05
+                      and fc.condition not in bad
+                      and fc.probability <= (high_rain_probability_percent | float(60))
+                      and recent.wet == 0
+                      and fc.humidity <= (wet_grass_humidity_percent | float(88))
+                      and (mowing_window_preset != 'night' or (fiatlux_installed | bool)) %}
+                  {% set condition_names = {
+                    'clear-night': 'bezchmurnie',
+                    'cloudy': 'pochmurno',
+                    'exceptional': 'nietypowe warunki',
+                    'fog': 'mgła',
+                    'hail': 'grad',
+                    'lightning': 'burze',
+                    'lightning-rainy': 'burze z deszczem',
+                    'partlycloudy': 'częściowe zachmurzenie',
+                    'pouring': 'ulewny deszcz',
+                    'rainy': 'deszcz',
+                    'snowy': 'śnieg',
+                    'snowy-rainy': 'deszcz ze śniegiem',
+                    'sunny': 'słonecznie',
+                    'windy': 'wietrznie',
+                    'windy-variant': 'wietrznie z zachmurzeniem'
+                  } %}
+                  {% set condition_label = condition_names.get(fc.condition, fc.condition if fc.condition else 'brak opisu') %}
+                  {{ 'safe' if safe else 'unsafe' }};{{ condition_label }}, temperatura {{ fc.temp | round(1) }} st. C, opad {{ fc.rain | round(1) }} mm, ryzyko deszczu {{ fc.probability | round(0) }}%, wilgotność {{ fc.humidity | round(0) }}%
                 {% endif %}
           - choose:
               - conditions:
@@ -1179,17 +1267,38 @@ actions:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ trigger.id == 'update_growth' }}"
+                    value_template: >-
+                      {% set previous = previous_next_mow_datetime | trim %}
+                      {% set planned = planned_next_mow_datetime | trim %}
+                      {{ trigger.id == 'update_growth'
+                         or (trigger.id == 'refresh_conditions'
+                             and (previous in ['unknown', 'unavailable', 'none', '']
+                                  or ((as_timestamp(previous) - as_timestamp(planned)) | abs) >= 60)) }}
                 sequence:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
-                      title: "Worx: zaplanowano koszenie"
+                      title: >-
+                        {% if (planned_next_mow_forecast | trim).startswith('safe;') %}
+                          {{ 'Worx: zaktualizowano termin'
+                             if trigger.id == 'refresh_conditions'
+                             else 'Worx: zaplanowano koszenie' }}
+                        {% else %}
+                          Worx: oczekiwanie na warunki
+                        {% endif %}
                       message: >-
-                        Termin: {{ planned_next_mow_label | trim }}.
-                        Powod: {{ planned_next_mow_reason | trim }}.
-                        Przyrost: {{ new_growth_mm }} mm, prog:
-                        {{ growth_threshold_mm }} mm.
+                        Skumulowany przyrost: {{ new_growth_mm }} mm
+                        (próg {{ growth_threshold_mm }} mm).
+                        {% if (planned_next_mow_forecast | trim).startswith('safe;') %}
+                        Koszenie: {{ planned_next_mow_label | trim }}.
+                        Prognozowane warunki podczas koszenia:
+                        {{ (planned_next_mow_forecast | trim).split(';', 1)[1] }}.
+                        Powód wyboru: {{ planned_next_mow_reason | trim }}.
+                        {% else %}
+                        Nie znaleziono jeszcze bezpiecznej godziny koszenia.
+                        Następna ocena warunków:
+                        {{ planned_next_mow_label | trim }}.
+                        {% endif %}
 
       - conditions:
           - condition: template
@@ -1198,7 +1307,7 @@ actions:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: "{{ planning_mode == 'auto' and rain_source_entity.split('.')[0] == 'weather' }}"
+                    value_template: "{{ rain_source_entity.split('.')[0] == 'weather' }}"
                 sequence:
                   - action: weather.get_forecasts
                     target:
@@ -1224,7 +1333,7 @@ actions:
                   {% endfor %}
                   {% if horizon.max > 0 %}
                     {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
-                    {% set ns = namespace(best_ts=0, best_score=999999) %}
+                    {% set ns = namespace(preferred_ts=0, preferred_score=999999, fallback_ts=0, fallback_score=999999) %}
                     {% set first_day_ts = earliest_allowed_ts %}
                     {% set earliest_clock = earliest_allowed_ts | timestamp_custom('%H:%M:%S', true) %}
                     {% if backup_start_time_value <= primary_start_time_value and earliest_clock < backup_start_time_value %}
@@ -1234,13 +1343,20 @@ actions:
                     {% for day in range(0, weather_search_days | int(4)) %}
                       {% set day_ts = as_timestamp(first_day ~ ' 00:00:00') + (day * 86400) %}
                       {% set target_date = day_ts | timestamp_custom('%Y-%m-%d', true) %}
-                      {% set window_start = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) %}
-                      {% set raw_window_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
-                      {% set window_end = raw_window_end if raw_window_end > window_start else raw_window_end + 86400 %}
-                      {% set search_end = [window_end, horizon.max + 3600] | min %}
-                      {% set start_ts = [window_start, earliest_allowed_ts] | max %}
+                      {% set preferred_start = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) %}
+                      {% set raw_preferred_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
+                      {% set preferred_end = raw_preferred_end if raw_preferred_end > preferred_start else raw_preferred_end + 86400 %}
+                      {% if mowing_window_preset == 'night' %}
+                        {% set search_start = preferred_start %}
+                        {% set raw_search_end = preferred_end %}
+                      {% else %}
+                        {% set search_start = as_timestamp(target_date ~ ' 06:00:00') %}
+                        {% set raw_search_end = as_timestamp(target_date ~ ' 22:00:00') %}
+                      {% endif %}
+                      {% set search_end = [raw_search_end, horizon.max + 3600] | min %}
+                      {% set start_ts = [search_start, earliest_allowed_ts] | max %}
                       {% if start_ts <= search_end %}
-                        {% set window_mid = ((window_start + window_end) / 2) %}
+                        {% set window_mid = ((preferred_start + preferred_end) / 2) %}
                         {% set first_slot = ((start_ts / step) | round(0, 'ceil') | int) * step %}
                         {% set slots = [(((search_end - first_slot) / step) | round(0, 'floor') | int) + 1, 0] | max %}
                         {% for slot in range(0, slots) %}
@@ -1285,18 +1401,30 @@ actions:
                           {% elif fc.humidity > 82 %}
                             {% set score = score + 80 %}
                           {% endif %}
-                          {% if fc.seen == 1
-                                and fc.temp >= (min_mowing_temperature_c | float(10))
-                                and fc.temp <= (max_mowing_temperature_c | float(25))
-                                and score < ns.best_score %}
-                            {% set ns.best_score = score %}
-                            {% set ns.best_ts = ts %}
+                          {% set safe = fc.seen == 1
+                              and fc.temp >= (min_mowing_temperature_c | float(10))
+                              and fc.temp <= (max_mowing_temperature_c | float(25))
+                              and fc.rain <= 0.05
+                              and fc.condition not in bad
+                              and fc.probability <= (high_rain_probability_percent | float(60))
+                              and recent.wet == 0
+                              and fc.humidity <= (wet_grass_humidity_percent | float(88))
+                              and (mowing_window_preset != 'night' or (fiatlux_installed | bool)) %}
+                          {% if safe and score < ns.fallback_score %}
+                            {% set ns.fallback_score = score %}
+                            {% set ns.fallback_ts = ts %}
+                          {% endif %}
+                          {% if safe and ts >= preferred_start and ts <= preferred_end and score < ns.preferred_score %}
+                            {% set ns.preferred_score = score %}
+                            {% set ns.preferred_ts = ts %}
                           {% endif %}
                         {% endfor %}
                       {% endif %}
                     {% endfor %}
-                    {% if ns.best_ts > 0 %}
-                      {{ ns.best_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+                    {% if ns.preferred_ts > 0 %}
+                      {{ ns.preferred_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+                    {% elif ns.fallback_ts > 0 %}
+                      {{ ns.fallback_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
                     {% else %}
                       {{ fallback }}
                     {% endif %}
@@ -1348,6 +1476,12 @@ actions:
                       {% endif %}
                     {% endif %}
                   {% endfor %}
+                  {% set selected_clock = ts | timestamp_custom('%H:%M:%S', true) %}
+                  {% if backup_start_time_value <= primary_start_time_value %}
+                    {% set inside_preferred_window = selected_clock >= primary_start_time_value or selected_clock <= backup_start_time_value %}
+                  {% else %}
+                    {% set inside_preferred_window = selected_clock >= primary_start_time_value and selected_clock <= backup_start_time_value %}
+                  {% endif %}
                   {% if fc.seen == 0 %}
                     to najbliższy sensowny termin, ale prognoza godzinowa nie ma już dokładnych danych dla tej godziny
                   {% elif fc.temp < (min_mowing_temperature_c | float(10)) %}
@@ -1356,6 +1490,8 @@ actions:
                     prognozowana temperatura {{ fc.temp | round(1) }} st. C przekracza zalecane maksimum {{ max_mowing_temperature_c }} st. C, dlatego automatyzacja bedzie szukac chlodniejszej godziny
                   {% elif fc.rain > 0.05 or fc.condition in bad %}
                     to najbezpieczniejsza następna próba w prognozie, mimo że nadal widać ryzyko opadu
+                  {% elif not inside_preferred_window %}
+                    to najbliższa bezpieczna godzina poza preferowanym oknem; w wybranym oknie nie ma warunków spełniających temperaturę, opad i wilgotność
                   {% elif urgent_growth and recent.wet == 0 and fc.humidity <= (wet_grass_humidity_percent | float(88)) %}
                     przyrost trawy jest wysoki, więc automatyzacja wybiera najbliższą bezpieczną próbę zamiast czekać na idealniejsze warunki kolejnego dnia
                   {% elif recent.wet == 1 %}
@@ -1365,7 +1501,72 @@ actions:
                   {% else %}
                     prognoza pokazuje brak deszczu, przerwę po opadach i najniższe ryzyko mokrej trawy w wybranym oknie
                   {% endif %}
-                  (ryzyko deszczu {{ fc.probability | round(0) }}%, opad {{ fc.rain | round(1) }} mm, wilgotność {{ fc.humidity | round(0) }}%, temperatura {{ fc.temp | round(0) }} st. C)
+                {% endif %}
+              planned_retry_mow_forecast: >-
+                {% if weather_forecast_at_start is not defined %}
+                  unknown;brak prognozy godzinowej dla wskazanego terminu
+                {% else %}
+                  {% set items = weather_forecast_at_start.get(rain_source_entity, {}).get('forecast', []) %}
+                  {% set ts = as_timestamp(planned_retry_mow_datetime | trim) %}
+                  {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
+                  {% set fc = namespace(seen=0, rain=0, probability=0, temp=temp_c | float(10), humidity=60, condition='') %}
+                  {% set recent = namespace(wet=0) %}
+                  {% for item in items %}
+                    {% set item_ts = as_timestamp(item.datetime) %}
+                    {% if item_ts <= ts and item_ts > (ts - 3600) %}
+                      {% set fc.seen = 1 %}
+                      {% set fc.rain = item.precipitation | default(0) | float(0) %}
+                      {% set fc.probability = item.precipitation_probability | default(0) | float(0) %}
+                      {% set fc.temp = item.temperature | default(temp_c) | float(temp_c) %}
+                      {% set fc.humidity = item.humidity | default(60) | float(60) %}
+                      {% set fc.condition = item.condition | default('') %}
+                    {% endif %}
+                    {% if item_ts <= ts and item_ts > (ts - ((dry_after_rain_hours | int(3)) * 3600)) %}
+                      {% if (item.precipitation | default(0) | float(0)) > 0.05 or (item.condition | default('')) in bad %}
+                        {% set recent.wet = 1 %}
+                      {% endif %}
+                    {% endif %}
+                  {% endfor %}
+                  {% set safe = fc.seen == 1
+                      and fc.temp >= (min_mowing_temperature_c | float(10))
+                      and fc.temp <= (max_mowing_temperature_c | float(25))
+                      and fc.rain <= 0.05
+                      and fc.condition not in bad
+                      and fc.probability <= (high_rain_probability_percent | float(60))
+                      and recent.wet == 0
+                      and fc.humidity <= (wet_grass_humidity_percent | float(88))
+                      and (mowing_window_preset != 'night' or (fiatlux_installed | bool)) %}
+                  {% set condition_names = {
+                    'clear-night': 'bezchmurnie',
+                    'cloudy': 'pochmurno',
+                    'exceptional': 'nietypowe warunki',
+                    'fog': 'mgła',
+                    'hail': 'grad',
+                    'lightning': 'burze',
+                    'lightning-rainy': 'burze z deszczem',
+                    'partlycloudy': 'częściowe zachmurzenie',
+                    'pouring': 'ulewny deszcz',
+                    'rainy': 'deszcz',
+                    'snowy': 'śnieg',
+                    'snowy-rainy': 'deszcz ze śniegiem',
+                    'sunny': 'słonecznie',
+                    'windy': 'wietrznie',
+                    'windy-variant': 'wietrznie z zachmurzeniem'
+                  } %}
+                  {% set condition_label = condition_names.get(fc.condition, fc.condition if fc.condition else 'brak opisu') %}
+                  {{ 'safe' if safe else 'unsafe' }};{{ condition_label }}, temperatura {{ fc.temp | round(1) }} st. C, opad {{ fc.rain | round(1) }} mm, ryzyko deszczu {{ fc.probability | round(0) }}%, wilgotność {{ fc.humidity | round(0) }}%
+                {% endif %}
+          - variables:
+              retry_notification_details: >-
+                Skumulowany przyrost: {{ estimated_growth_mm }} mm.
+                {% if (planned_retry_mow_forecast | trim).startswith('safe;') %}
+                Następne koszenie: {{ planned_retry_mow_label | trim }}.
+                Prognozowane warunki podczas koszenia:
+                {{ (planned_retry_mow_forecast | trim).split(';', 1)[1] }}.
+                {% else %}
+                Nie znaleziono jeszcze bezpiecznej godziny koszenia.
+                Następna ocena warunków:
+                {{ planned_retry_mow_label | trim }}.
                 {% endif %}
           - choose:
               - conditions:
@@ -1391,7 +1592,7 @@ actions:
                       message: >-
                         Planowany start: {{ current_time_label | trim }}.
                         Powód: {{ start_block_reason | trim }}.
-                        Następna próba: {{ planned_retry_mow_label | trim }}.
+                        {{ retry_notification_details | trim }}
                   - stop: Warunki koszenia nie sa spelnione; przesunieto nastepne koszenie.
           - variables:
               mowing_cycle_started_at: "{{ now().strftime('%d.%m %H:%M') }}"
@@ -1438,7 +1639,7 @@ actions:
                       message: >-
                         Powód: deszcz podczas uruchamiania krawędzi.
                         Robot wraca do bazy.
-                        Następna próba: {{ planned_retry_mow_label | trim }}.
+                        {{ retry_notification_details | trim }}
                   - stop: Przycinanie krawedzi przerwane przez deszcz.
               - conditions:
                   - condition: template
@@ -1486,7 +1687,7 @@ actions:
                       message: >-
                         Powód: deszcz podczas ponownego uruchamiania krawędzi.
                         Robot wraca do bazy.
-                        Następna próba: {{ planned_retry_mow_label | trim }}.
+                        {{ retry_notification_details | trim }}
                   - stop: Przycinanie krawedzi przerwane przez deszcz po ponowieniu.
               - conditions:
                   - condition: template
@@ -1508,8 +1709,7 @@ actions:
                       title: "Worx: koszenie przełożone"
                       message: >-
                         Powód: robot nie potwierdził startu krawędzi po dwóch
-                        próbach. Następna próba:
-                        {{ planned_retry_mow_label | trim }}.
+                        próbach. {{ retry_notification_details | trim }}
                   - stop: Nie potwierdzono startu przycinania krawedzi po dwoch probach.
           - condition: template
             alias: Przycinanie krawedzi rozpoczete
@@ -1559,7 +1759,7 @@ actions:
                       message: >-
                         Start: {{ mowing_cycle_started_at }}.
                         Powód: deszcz przerwał przycinanie krawędzi.
-                        Następna próba: {{ planned_retry_mow_label | trim }}.
+                        {{ retry_notification_details | trim }}
                   - stop: Deszcz przerwal etap krawedzi.
               - conditions:
                   - condition: template
@@ -1590,8 +1790,7 @@ actions:
                       message: >-
                         Start: {{ mowing_cycle_started_at }}.
                         Powód: robot nie wrócił do bazy po krawędziach.
-                        Następna próba:
-                        {{ planned_retry_mow_label | trim }}.
+                        {{ retry_notification_details | trim }}
                   - stop: Nie potwierdzono powrotu do bazy po krawedziach.
           - variables:
               edge_mowing_finished_ts: "{{ as_timestamp(now()) }}"
@@ -1624,8 +1823,7 @@ actions:
                       message: >-
                         Start: {{ mowing_cycle_started_at }}.
                         Powód: po krawędziach, podczas ładowania, zaczął padać
-                        deszcz. Następna próba:
-                        {{ planned_retry_mow_label | trim }}.
+                        deszcz. {{ retry_notification_details | trim }}
                   - stop: Po krawedziach zaczal padac deszcz.
               - conditions:
                   - condition: template
@@ -1648,8 +1846,7 @@ actions:
                       message: >-
                         Start: {{ mowing_cycle_started_at }}.
                         Powód: robot opuścił bazę podczas ładowania po
-                        krawędziach. Następna próba:
-                        {{ planned_retry_mow_label | trim }}.
+                        krawędziach. {{ retry_notification_details | trim }}
                   - stop: Robot opuscil baze podczas ladowania po krawedziach.
               - conditions:
                   - condition: template
@@ -1675,8 +1872,7 @@ actions:
                         Start: {{ mowing_cycle_started_at }}.
                         Powód: bateria nie osiągnęła 80% w ciągu 8 godzin
                         (aktualnie {{ states(battery_sensor) }}%).
-                        Następna próba:
-                        {{ planned_retry_mow_label | trim }}.
+                        {{ retry_notification_details | trim }}
                   - stop: Bateria nie osiagnela 80 procent po krawedziach.
           - variables:
               temperature_after_edges_c: >-
@@ -1720,6 +1916,17 @@ actions:
                 {% elif days == 1 %}jutro o {{ ts | timestamp_custom('%H:%M', true) }}
                 {% elif days == 2 %}za 2 dni o {{ ts | timestamp_custom('%H:%M', true) }}
                 {% else %}za {{ days }} dni o {{ ts | timestamp_custom('%H:%M', true) }}{% endif %}
+              temperature_retry_notification_details: >-
+                Skumulowany przyrost: {{ estimated_growth_mm }} mm.
+                {% if (planned_retry_mow_forecast | trim).startswith('safe;')
+                      and (temperature_retry_datetime | trim) == (planned_retry_mow_datetime | trim) %}
+                Następne koszenie: {{ temperature_retry_label | trim }}.
+                Prognozowane warunki podczas koszenia:
+                {{ (planned_retry_mow_forecast | trim).split(';', 1)[1] }}.
+                {% else %}
+                Nie znaleziono jeszcze bezpiecznej godziny koszenia.
+                Następna ocena warunków: {{ temperature_retry_label | trim }}.
+                {% endif %}
           - choose:
               - conditions:
                   - condition: template
@@ -1743,7 +1950,7 @@ actions:
                         Start: {{ mowing_cycle_started_at }}.
                         Powód:
                         {{ temperature_after_edges_block_reason | trim }}.
-                        Następna próba: {{ temperature_retry_label | trim }}.
+                        {{ temperature_retry_notification_details | trim }}
                   - stop: Temperatura po krawedziach jest poza zakresem koszenia.
           - condition: template
             alias: Robot w bazie, bateria minimum 80 procent i bezpieczna temperatura
@@ -1796,8 +2003,7 @@ actions:
                       message: >-
                         Start: {{ mowing_cycle_started_at }}.
                         Powód: deszcz przed startem zwykłego koszenia.
-                        Następna próba:
-                        {{ planned_retry_mow_label | trim }}.
+                        {{ retry_notification_details | trim }}
                   - stop: Start koszenia przerwany przez deszcz.
               - conditions:
                   - condition: template
@@ -1846,8 +2052,7 @@ actions:
                       message: >-
                         Start: {{ mowing_cycle_started_at }}.
                         Powód: deszcz podczas ponownego startu zwykłego
-                        koszenia. Następna próba:
-                        {{ planned_retry_mow_label | trim }}.
+                        koszenia. {{ retry_notification_details | trim }}
                   - stop: Start koszenia przerwany przez deszcz po ponowieniu.
           - choose:
               - conditions:
@@ -1873,8 +2078,7 @@ actions:
                         Start: {{ mowing_cycle_started_at }}.
                         Powód: zwykłe koszenie nie wystartowało po dwóch
                         próbach (stan: {{ states(mower_entity) }}).
-                        Następna próba:
-                        {{ planned_retry_mow_label | trim }}.
+                        {{ retry_notification_details | trim }}
                   - stop: Nie potwierdzono startu koszenia po dwoch probach.
           - condition: template
             alias: Normalne koszenie rozpoczete
@@ -1948,7 +2152,7 @@ actions:
                   - choose:
                       - conditions:
                           - condition: template
-                            value_template: "{{ planning_mode == 'auto' and rain_source_entity.split('.')[0] == 'weather' }}"
+                            value_template: "{{ rain_source_entity.split('.')[0] == 'weather' }}"
                         sequence:
                           - action: weather.get_forecasts
                             target:
@@ -1974,7 +2178,7 @@ actions:
                           {% endfor %}
                           {% if horizon.max > 0 %}
                             {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
-                            {% set ns = namespace(best_ts=0, best_score=999999) %}
+                            {% set ns = namespace(preferred_ts=0, preferred_score=999999, fallback_ts=0, fallback_score=999999) %}
                             {% set first_day_ts = earliest_allowed_ts %}
                             {% set earliest_clock = earliest_allowed_ts | timestamp_custom('%H:%M:%S', true) %}
                             {% if backup_start_time_value <= primary_start_time_value and earliest_clock < backup_start_time_value %}
@@ -1984,13 +2188,20 @@ actions:
                             {% for day in range(0, weather_search_days | int(4)) %}
                               {% set day_ts = as_timestamp(first_day ~ ' 00:00:00') + (day * 86400) %}
                               {% set target_date = day_ts | timestamp_custom('%Y-%m-%d', true) %}
-                              {% set window_start = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) %}
-                              {% set raw_window_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
-                              {% set window_end = raw_window_end if raw_window_end > window_start else raw_window_end + 86400 %}
-                              {% set search_end = [window_end, horizon.max + 3600] | min %}
-                              {% set start_ts = [window_start, earliest_allowed_ts] | max %}
+                              {% set preferred_start = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) %}
+                              {% set raw_preferred_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) %}
+                              {% set preferred_end = raw_preferred_end if raw_preferred_end > preferred_start else raw_preferred_end + 86400 %}
+                              {% if mowing_window_preset == 'night' %}
+                                {% set search_start = preferred_start %}
+                                {% set raw_search_end = preferred_end %}
+                              {% else %}
+                                {% set search_start = as_timestamp(target_date ~ ' 06:00:00') %}
+                                {% set raw_search_end = as_timestamp(target_date ~ ' 22:00:00') %}
+                              {% endif %}
+                              {% set search_end = [raw_search_end, horizon.max + 3600] | min %}
+                              {% set start_ts = [search_start, earliest_allowed_ts] | max %}
                               {% if start_ts <= search_end %}
-                                {% set window_mid = ((window_start + window_end) / 2) %}
+                                {% set window_mid = ((preferred_start + preferred_end) / 2) %}
                                 {% set first_slot = ((start_ts / step) | round(0, 'ceil') | int) * step %}
                                 {% set slots = [(((search_end - first_slot) / step) | round(0, 'floor') | int) + 1, 0] | max %}
                                 {% for slot in range(0, slots) %}
@@ -2035,18 +2246,30 @@ actions:
                                   {% elif fc.humidity > 82 %}
                                     {% set score = score + 80 %}
                                   {% endif %}
-                                  {% if fc.seen == 1
-                                        and fc.temp >= (min_mowing_temperature_c | float(10))
-                                        and fc.temp <= (max_mowing_temperature_c | float(25))
-                                        and score < ns.best_score %}
-                                    {% set ns.best_score = score %}
-                                    {% set ns.best_ts = ts %}
+                                  {% set safe = fc.seen == 1
+                                      and fc.temp >= (min_mowing_temperature_c | float(10))
+                                      and fc.temp <= (max_mowing_temperature_c | float(25))
+                                      and fc.rain <= 0.05
+                                      and fc.condition not in bad
+                                      and fc.probability <= (high_rain_probability_percent | float(60))
+                                      and recent.wet == 0
+                                      and fc.humidity <= (wet_grass_humidity_percent | float(88))
+                                      and (mowing_window_preset != 'night' or (fiatlux_installed | bool)) %}
+                                  {% if safe and score < ns.fallback_score %}
+                                    {% set ns.fallback_score = score %}
+                                    {% set ns.fallback_ts = ts %}
+                                  {% endif %}
+                                  {% if safe and ts >= preferred_start and ts <= preferred_end and score < ns.preferred_score %}
+                                    {% set ns.preferred_score = score %}
+                                    {% set ns.preferred_ts = ts %}
                                   {% endif %}
                                 {% endfor %}
                               {% endif %}
                             {% endfor %}
-                            {% if ns.best_ts > 0 %}
-                              {{ ns.best_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+                            {% if ns.preferred_ts > 0 %}
+                              {{ ns.preferred_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+                            {% elif ns.fallback_ts > 0 %}
+                              {{ ns.fallback_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
                             {% else %}
                               {{ fallback }}
                             {% endif %}
@@ -2094,6 +2317,12 @@ actions:
                               {% endif %}
                             {% endif %}
                           {% endfor %}
+                          {% set selected_clock = ts | timestamp_custom('%H:%M:%S', true) %}
+                          {% if backup_start_time_value <= primary_start_time_value %}
+                            {% set inside_preferred_window = selected_clock >= primary_start_time_value or selected_clock <= backup_start_time_value %}
+                          {% else %}
+                            {% set inside_preferred_window = selected_clock >= primary_start_time_value and selected_clock <= backup_start_time_value %}
+                          {% endif %}
                           {% if fc.seen == 0 %}
                             to najbliższy sensowny termin, ale prognoza godzinowa nie ma już dokładnych danych dla tej godziny
                           {% elif fc.temp < (min_mowing_temperature_c | float(10)) %}
@@ -2102,6 +2331,8 @@ actions:
                             prognozowana temperatura {{ fc.temp | round(1) }} st. C przekracza zalecane maksimum {{ max_mowing_temperature_c }} st. C, wiec termin moze zostac przesuniety
                           {% elif fc.rain > 0.05 or fc.condition in bad %}
                             to najbezpieczniejszy dostępny termin w prognozie, mimo że nadal widać ryzyko opadu
+                          {% elif not inside_preferred_window %}
+                            to najbliższa bezpieczna godzina poza preferowanym oknem; w wybranym oknie nie ma warunków spełniających temperaturę, opad i wilgotność
                           {% elif recent.wet == 1 %}
                             automatyzacja odczeka po deszczu, żeby kolejne koszenie nie weszło na świeżo mokry trawnik
                           {% elif fc.humidity > (wet_grass_humidity_percent | float(88)) %}
@@ -2109,7 +2340,60 @@ actions:
                           {% else %}
                             prognoza pokazuje brak deszczu, przerwę po opadach i najniższe ryzyko mokrej trawy w wybranym oknie
                           {% endif %}
-                          (ryzyko deszczu {{ fc.probability | round(0) }}%, opad {{ fc.rain | round(1) }} mm, wilgotność {{ fc.humidity | round(0) }}%, temperatura {{ fc.temp | round(0) }} st. C)
+                        {% endif %}
+                      planned_next_after_reset_forecast: >-
+                        {% if weather_forecast_after_mow is not defined %}
+                          unknown;brak prognozy godzinowej dla wskazanego terminu
+                        {% else %}
+                          {% set items = weather_forecast_after_mow.get(rain_source_entity, {}).get('forecast', []) %}
+                          {% set ts = as_timestamp(planned_next_after_reset_datetime | trim) %}
+                          {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
+                          {% set fc = namespace(seen=0, rain=0, probability=0, temp=temp_c | float(10), humidity=60, condition='') %}
+                          {% set recent = namespace(wet=0) %}
+                          {% for item in items %}
+                            {% set item_ts = as_timestamp(item.datetime) %}
+                            {% if item_ts <= ts and item_ts > (ts - 3600) %}
+                              {% set fc.seen = 1 %}
+                              {% set fc.rain = item.precipitation | default(0) | float(0) %}
+                              {% set fc.probability = item.precipitation_probability | default(0) | float(0) %}
+                              {% set fc.temp = item.temperature | default(temp_c) | float(temp_c) %}
+                              {% set fc.humidity = item.humidity | default(60) | float(60) %}
+                              {% set fc.condition = item.condition | default('') %}
+                            {% endif %}
+                            {% if item_ts <= ts and item_ts > (ts - ((dry_after_rain_hours | int(3)) * 3600)) %}
+                              {% if (item.precipitation | default(0) | float(0)) > 0.05 or (item.condition | default('')) in bad %}
+                                {% set recent.wet = 1 %}
+                              {% endif %}
+                            {% endif %}
+                          {% endfor %}
+                          {% set safe = fc.seen == 1
+                              and fc.temp >= (min_mowing_temperature_c | float(10))
+                              and fc.temp <= (max_mowing_temperature_c | float(25))
+                              and fc.rain <= 0.05
+                              and fc.condition not in bad
+                              and fc.probability <= (high_rain_probability_percent | float(60))
+                              and recent.wet == 0
+                              and fc.humidity <= (wet_grass_humidity_percent | float(88))
+                              and (mowing_window_preset != 'night' or (fiatlux_installed | bool)) %}
+                          {% set condition_names = {
+                            'clear-night': 'bezchmurnie',
+                            'cloudy': 'pochmurno',
+                            'exceptional': 'nietypowe warunki',
+                            'fog': 'mgła',
+                            'hail': 'grad',
+                            'lightning': 'burze',
+                            'lightning-rainy': 'burze z deszczem',
+                            'partlycloudy': 'częściowe zachmurzenie',
+                            'pouring': 'ulewny deszcz',
+                            'rainy': 'deszcz',
+                            'snowy': 'śnieg',
+                            'snowy-rainy': 'deszcz ze śniegiem',
+                            'sunny': 'słonecznie',
+                            'windy': 'wietrznie',
+                            'windy-variant': 'wietrznie z zachmurzeniem'
+                          } %}
+                          {% set condition_label = condition_names.get(fc.condition, fc.condition if fc.condition else 'brak opisu') %}
+                          {{ 'safe' if safe else 'unsafe' }};{{ condition_label }}, temperatura {{ fc.temp | round(1) }} st. C, opad {{ fc.rain | round(1) }} mm, ryzyko deszczu {{ fc.probability | round(0) }}%, wilgotność {{ fc.humidity | round(0) }}%
                         {% endif %}
                   - action: input_datetime.set_datetime
                     target:
@@ -2142,7 +2426,16 @@ actions:
                         (krawędzie {{ edge_mowing_minutes }} min, zwykłe
                         {{ normal_mowing_minutes }} min).
                         Cały cykl z ładowaniem: {{ whole_cycle_duration_label | trim }}.
-                        Następne: {{ planned_next_after_reset_label | trim }}.
+                        Skumulowany przyrost: 0 mm.
+                        {% if (planned_next_after_reset_forecast | trim).startswith('safe;') %}
+                        Następne koszenie:
+                        {{ planned_next_after_reset_label | trim }}.
+                        Prognozowane warunki podczas koszenia:
+                        {{ (planned_next_after_reset_forecast | trim).split(';', 1)[1] }}.
+                        {% else %}
+                        Następna ocena warunków:
+                        {{ planned_next_after_reset_label | trim }}.
+                        {% endif %}
             default:
               - action: input_number.set_value
                 target:
@@ -2172,4 +2465,4 @@ actions:
                     {% else %}
                     Powód: robot nie potwierdził powrotu do bazy.
                     {% endif %}
-                    Następna próba: {{ planned_retry_mow_label | trim }}.
+                    {{ retry_notification_details | trim }}

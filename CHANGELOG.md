@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.4.1 - 2026-06-29
+
+- Fixed automatic planning so an unsafe preferred hour is replaced with the nearest safe daytime forecast slot instead of being reported as a planned start.
+- Added a daytime fallback search from `06:00` to `22:00` when no safe slot exists inside the selected non-night mowing window.
+- Planning, postponement and completion notifications now show accumulated grass growth and the forecast conditions for the selected mowing time.
+- The 30-minute condition refresh now updates the notification when it changes the planned mowing time.
+
 ## 0.4.0 - 2026-06-28
 
 - Added a `22:00-05:00` night mowing preset with a required FiatLux accessory confirmation.

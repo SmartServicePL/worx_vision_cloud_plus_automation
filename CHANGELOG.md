@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reworked the GitHub README and blueprint description into clearer sections for new users.
 - Limited notifications to the daily growth calculation, mowing start, and mowing completion/interruption after a real start.
 - Kept the 30-minute condition refresh silent so forecast changes no longer show fluctuating projected growth as stored accumulated growth.
 

@@ -1,53 +1,42 @@
 blueprint:
   name: Worx Vision Cloud PLUS - inteligentny harmonogram koszenia
   description: |
-    Kompletny harmonogram koszenia dla robotów Worx Vision Cloud PLUS,
-    sterowany przez Home Assistant. Automatyzacja ocenia rzeczywistą potrzebę
-    koszenia, wybiera bezpieczny termin i prowadzi robota przez cały cykl pracy.
+    Inteligentny harmonogram koszenia dla robotów Worx Vision Cloud PLUS,
+    sterowany z Home Assistant zamiast ze sztywnego harmonogramu w aplikacji
+    WORX.
 
-    Inteligentne planowanie:
-    - dzienny przyrost trawy jest szacowany modelem Growth Potential (GP),
-    - obliczenia uwzględniają temperaturę, opady, wilgotność gleby,
-      nasłonecznienie oraz opcjonalne podlewanie i nawożenie,
-    - robot może rozpocząć pracę tylko w ustawionym zakresie temperatur;
-      domyślnie od 10°C do 25°C,
-    - próg startu jest dopasowany do częstego, lekkiego koszenia robotem;
-      zasada 1/3 źdźbła pozostaje limitem bezpieczeństwa, a nie celem,
-    - czas pracy jest dobierany do powierzchni trawnika i wydajności kosiarki.
+    Co robi automatyzacja:
+    - szacuje dzienny przyrost trawy modelem Growth Potential (GP),
+    - uwzględnia pogodę, opady, temperaturę, słońce, opcjonalną wilgotność gleby,
+      podlewanie i nawożenie,
+    - wybiera bezpieczną godzinę koszenia w wybranym oknie czasowym,
+    - omija deszcz, świeżo mokry trawnik i temperatury poza ustawionym zakresem,
+    - preferuje częste, lekkie koszenie robotem zamiast czekania na wysoką trawę.
 
-    W trybie automatycznym prognoza godzinowa służy do wyboru najlepszego
-    momentu w wybranym oknie czasowym. Automatyzacja preferuje codzienne
-    koszenie, gdy trawa odpowiednio przyrosła, ale unika deszczu, świeżo mokrej
-    trawy, nadmiernej wilgotności oraz temperatury poza ustawionym zakresem.
-    Dostępny jest także tryb stałej godziny z głównym terminem i drugą próbą
-    startu. Okno nocne działa od 22:00 do 05:00 i wymaga potwierdzenia, że robot
-    ma zamontowane akcesorium oświetleniowe FiatLux.
+    Jak wygląda cykl koszenia:
+    1. Home Assistant uruchamia osobne przycinanie krawędzi.
+    2. Automatyzacja czeka, aż robot wróci do bazy.
+    3. Robot ładuje baterię do minimum 80%.
+    4. Temperatura jest sprawdzana ponownie.
+    5. Dopiero wtedy startuje normalne koszenie jednorazowe z wyliczonym czasem
+       pracy.
 
-    Kolejność zaplanowanego cyklu:
-    - najpierw wysyłana jest sprawdzona komenda przycinania samych krawędzi,
-    - Home Assistant potwierdza wyjazd robota; przy braku potwierdzenia komenda
-      jest ponawiana jeden raz,
-    - automatyzacja czeka na zakończenie krawędzi i potwierdzony powrót do bazy,
-    - robot pozostaje w bazie do osiągnięcia co najmniej 80% baterii; maksymalny
-      czas oczekiwania na ładowanie wynosi 8 godzin,
-    - temperatura jest sprawdzana ponownie po ładowaniu,
-    - dopiero wtedy wysyłana jest osobna komenda normalnego koszenia
-      jednorazowego z obliczonym czasem pracy.
+    Tryby pracy:
+    - tryb automatyczny wybiera najlepszy termin z prognozy godzinowej,
+    - tryb stałej godziny działa jak klasyczny harmonogram z drugą próbą startu,
+    - koszenie nocne 22:00-05:00 jest dostępne tylko po potwierdzeniu akcesorium
+      FiatLux.
 
-    Zwykłe koszenie nie zostanie uruchomione, jeśli nie uda się potwierdzić
-    startu krawędzi, powrotu do bazy, wymaganego poziomu baterii lub bezpiecznej
-    temperatury. Deszcz przerywa bezpiecznie cykl i odsyła robota do bazy.
-    Powiadomienia są ograniczone do trzech kluczowych zdarzeń: przeliczenia
-    przyrostu trawy, rozpoczęcia cyklu koszenia i zakończenia cyklu koszenia.
-    Warunki oraz prognoza są przeliczane po zakończeniu lub przełożeniu
-    koszenia, a dodatkowo odświeżane co 30 minut bez dodatkowych powiadomień.
+    Powiadomienia:
+    - po dziennym przeliczeniu przyrostu trawy,
+    - po rozpoczęciu cyklu koszenia,
+    - po zakończeniu albo przerwaniu cyklu po realnym starcie.
 
-    Wymagania przed uruchomieniem:
+    Wymagania:
     - integracja Worx Vision Cloud PLUS 1.0.11 lub nowsza,
-    - trzy helpery Home Assistant: przyrost trawy, ostatnie koszenie oraz
-      następne planowane koszenie,
-    - wyłączony harmonogram w aplikacji WORX, aby aplikacja i Home Assistant
-      nie uruchamiały robota niezależnie od siebie.
+    - trzy helpery Home Assistant: przyrost trawy, ostatnie koszenie i następne
+      planowane koszenie,
+    - wyłączony harmonogram koszenia w aplikacji WORX.
   domain: automation
   author: Smart Service
   homeassistant:

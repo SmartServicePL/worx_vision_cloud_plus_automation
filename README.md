@@ -2,7 +2,9 @@
   <img src="assets/worx-vision-cloud-plus-automation.png" alt="Worx Vision Cloud PLUS - Smart Mowing Automation for Home Assistant" width="100%">
 </p>
 
-Home Assistant automation blueprints for Worx Vision Cloud PLUS / Landroid Vision mowers.
+Smart mowing automation for Worx Vision Cloud PLUS / Landroid Vision mowers in Home Assistant.
+
+This blueprint replaces a rigid mowing timetable with a weather-aware schedule. It estimates grass growth, chooses a dry and sensible mowing window, starts edge cutting first, then starts normal mowing after the mower returns to the dock and recharges.
 
 This repository is separated from the custom integration repository on purpose:
 
@@ -21,13 +23,28 @@ Manual import URL:
 https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml
 ```
 
-## Smart Mowing Schedule
+## What It Does
 
-The smart mowing blueprint estimates grass growth with a cool-season turf Growth Potential (GP) temperature model combined with rain, optional soil moisture, sunlight/UV data, and optional irrigation/fertilization corrections. It stores the estimated grass growth in an `input_number`, tracks the last full mowing cycle in an `input_datetime`, stores the next planned mowing time in another `input_datetime`, and starts the mower only when the lawn needs mowing. The automatic start threshold is tuned for robotic mowing: frequent light cuts, usually around `2-4.5 mm` of estimated growth depending on the selected cutting height. The one-third blade rule is treated as a safety limit, not as the normal start threshold. In automatic mode it searches forecast-based mowing slots and prefers dry grass, no rain, and a sensible time inside the selected window preset. Forecast slots outside the configurable mowing temperature range are rejected; the default safe range is `10-25 C`. If no safe slot exists in a selected daytime window, the blueprint chooses the nearest safe forecast slot between `06:00` and `22:00` instead of advertising an unsafe preferred hour. A night preset from `22:00` to `05:00` is available only when the user confirms that the mower has the FiatLux lighting accessory installed. When grass growth is already high, the automation prefers the nearest safe mowing window instead of waiting for ideal weather on a later day. Conditions and the hourly forecast are refreshed every 30 minutes and recalculated after completion or postponement without sending extra notifications. Every planned cycle starts with a dedicated edge-only command. Home Assistant then waits for the mower to return to the dock and recharge to at least `80%` before sending the separate normal one-time mowing command. Temperature is checked again before that normal mowing command. Notifications are limited to the daily grass-growth calculation, mowing start, and mowing completion or interruption after a real start. Growth notifications show the stored accumulated growth and forecast conditions for the selected mowing time. Completion notifications also include actual start, finish and mowing duration. Manual mowing started from the WORX app is recognized after at least 10 minutes of mowing and updates the growth helpers when the mower returns to the dock.
+- Estimates grass growth once a day with a Growth Potential (GP) model.
+- Uses weather, rain, temperature, sunlight/UV, optional soil moisture, irrigation and fertilization settings.
+- Selects the best mowing time in the chosen time window, avoiding rain, wet grass and unsafe temperatures.
+- Runs edge cutting first, waits for the mower to return to the dock and recharge to at least `80%`, then starts normal one-time mowing.
+- Keeps three helpers updated: estimated grass growth, last full mowing, and next planned mowing.
+- Detects manual mowing started from the WORX app and resets the growth estimate after the mower returns to the dock.
 
-Before enabling this blueprint, disable the mowing schedule in the WORX app so Home Assistant is the only scheduler controlling mower starts.
+## Mowing Logic
 
-Before creating the automation from the blueprint, create three Home Assistant helpers:
+The automatic start threshold is tuned for robotic mowing. Instead of waiting for tall grass, the blueprint prefers frequent light cuts, usually around `2-4.5 mm` of estimated growth depending on the selected cutting height. The one-third blade rule is kept as a safety limit, not as the normal target.
+
+In automatic mode the blueprint checks hourly forecasts and rejects unsafe slots. By default, mowing is allowed only between `10 C` and `25 C`. If the selected daytime window has no safe slot, the blueprint looks for the nearest safe time between `06:00` and `22:00`. Night mowing from `22:00` to `05:00` is available only when the user confirms that the mower has the FiatLux lighting accessory installed.
+
+Conditions and forecasts are refreshed every 30 minutes without sending extra notifications. Notifications are limited to the daily grass-growth calculation, mowing start, and mowing completion or interruption after a real start.
+
+## Before You Start
+
+Disable the mowing schedule in the WORX app so Home Assistant is the only scheduler controlling mower starts.
+
+Create three Home Assistant helpers before creating the automation:
 
 - `input_number` for estimated grass growth, for example `input_number.worx_estimated_grass_growth_mm`.
 - `input_datetime` for the last full mowing cycle, for example `input_datetime.worx_last_full_mow`.

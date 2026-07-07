@@ -37,10 +37,10 @@ blueprint:
     Zwykłe koszenie nie zostanie uruchomione, jeśli nie uda się potwierdzić
     startu krawędzi, powrotu do bazy, wymaganego poziomu baterii lub bezpiecznej
     temperatury. Deszcz przerywa bezpiecznie cykl i odsyła robota do bazy.
-    Powiadomienia pokazują godzinę startu i zakończenia, rzeczywisty czas
-    koszenia oraz następny termin. Przy przełożeniu podawany jest krótki powód
-    i termin kolejnej próby. Warunki oraz prognoza są przeliczane po zakończeniu
-    lub przełożeniu koszenia, a dodatkowo odświeżane co 30 minut.
+    Powiadomienia są ograniczone do trzech kluczowych zdarzeń: przeliczenia
+    przyrostu trawy, rozpoczęcia cyklu koszenia i zakończenia cyklu koszenia.
+    Warunki oraz prognoza są przeliczane po zakończeniu lub przełożeniu
+    koszenia, a dodatkowo odświeżane co 30 minut bez dodatkowych powiadomień.
 
     Wymagania przed uruchomieniem:
     - integracja Worx Vision Cloud PLUS 1.0.11 lub nowsza,
@@ -1267,22 +1267,14 @@ actions:
           - choose:
               - conditions:
                   - condition: template
-                    value_template: >-
-                      {% set previous = previous_next_mow_datetime | trim %}
-                      {% set planned = planned_next_mow_datetime | trim %}
-                      {{ trigger.id == 'update_growth'
-                         or (trigger.id == 'refresh_conditions'
-                             and (previous in ['unknown', 'unavailable', 'none', '']
-                                  or ((as_timestamp(previous) - as_timestamp(planned)) | abs) >= 60)) }}
+                    value_template: "{{ trigger.id == 'update_growth' }}"
                 sequence:
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
                       title: >-
                         {% if (planned_next_mow_forecast | trim).startswith('safe;') %}
-                          {{ 'Worx: zaktualizowano termin'
-                             if trigger.id == 'refresh_conditions'
-                             else 'Worx: zaplanowano koszenie' }}
+                          Worx: przeliczono przyrost
                         {% else %}
                           Worx: oczekiwanie na warunki
                         {% endif %}
@@ -1585,14 +1577,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ planned_retry_mow_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Planowany start: {{ current_time_label | trim }}.
-                        Powód: {{ start_block_reason | trim }}.
-                        {{ retry_notification_details | trim }}
                   - stop: Warunki koszenia nie sa spelnione; przesunieto nastepne koszenie.
           - variables:
               mowing_cycle_started_at: "{{ now().strftime('%d.%m %H:%M') }}"
@@ -1632,14 +1616,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ planned_retry_mow_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Powód: deszcz podczas uruchamiania krawędzi.
-                        Robot wraca do bazy.
-                        {{ retry_notification_details | trim }}
                   - stop: Przycinanie krawedzi przerwane przez deszcz.
               - conditions:
                   - condition: template
@@ -1680,14 +1656,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ planned_retry_mow_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Powód: deszcz podczas ponownego uruchamiania krawędzi.
-                        Robot wraca do bazy.
-                        {{ retry_notification_details | trim }}
                   - stop: Przycinanie krawedzi przerwane przez deszcz po ponowieniu.
               - conditions:
                   - condition: template
@@ -1703,13 +1671,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ planned_retry_mow_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Powód: robot nie potwierdził startu krawędzi po dwóch
-                        próbach. {{ retry_notification_details | trim }}
                   - stop: Nie potwierdzono startu przycinania krawedzi po dwoch probach.
           - condition: template
             alias: Przycinanie krawedzi rozpoczete
@@ -1752,14 +1713,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ planned_retry_mow_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Powód: deszcz przerwał przycinanie krawędzi.
-                        {{ retry_notification_details | trim }}
                   - stop: Deszcz przerwal etap krawedzi.
               - conditions:
                   - condition: template
@@ -1783,14 +1736,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ planned_retry_mow_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Powód: robot nie wrócił do bazy po krawędziach.
-                        {{ retry_notification_details | trim }}
                   - stop: Nie potwierdzono powrotu do bazy po krawedziach.
           - variables:
               edge_mowing_finished_ts: "{{ as_timestamp(now()) }}"
@@ -1816,14 +1761,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ planned_retry_mow_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Powód: po krawędziach, podczas ładowania, zaczął padać
-                        deszcz. {{ retry_notification_details | trim }}
                   - stop: Po krawedziach zaczal padac deszcz.
               - conditions:
                   - condition: template
@@ -1839,14 +1776,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ planned_retry_mow_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Powód: robot opuścił bazę podczas ładowania po
-                        krawędziach. {{ retry_notification_details | trim }}
                   - stop: Robot opuscil baze podczas ladowania po krawedziach.
               - conditions:
                   - condition: template
@@ -1864,15 +1793,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ planned_retry_mow_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Powód: bateria nie osiągnęła 80% w ciągu 8 godzin
-                        (aktualnie {{ states(battery_sensor) }}%).
-                        {{ retry_notification_details | trim }}
                   - stop: Bateria nie osiagnela 80 procent po krawedziach.
           - variables:
               temperature_after_edges_c: >-
@@ -1942,15 +1862,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ temperature_retry_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Powód:
-                        {{ temperature_after_edges_block_reason | trim }}.
-                        {{ temperature_retry_notification_details | trim }}
                   - stop: Temperatura po krawedziach jest poza zakresem koszenia.
           - condition: template
             alias: Robot w bazie, bateria minimum 80 procent i bezpieczna temperatura
@@ -1996,14 +1907,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ planned_retry_mow_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Powód: deszcz przed startem zwykłego koszenia.
-                        {{ retry_notification_details | trim }}
                   - stop: Start koszenia przerwany przez deszcz.
               - conditions:
                   - condition: template
@@ -2045,14 +1948,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ planned_retry_mow_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Powód: deszcz podczas ponownego startu zwykłego
-                        koszenia. {{ retry_notification_details | trim }}
                   - stop: Start koszenia przerwany przez deszcz po ponowieniu.
           - choose:
               - conditions:
@@ -2070,15 +1965,6 @@ actions:
                               entity_id: "{{ next_mow_helper }}"
                             data:
                               datetime: "{{ planned_retry_mow_datetime | trim }}"
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: koszenie przełożone"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Powód: zwykłe koszenie nie wystartowało po dwóch
-                        próbach (stan: {{ states(mower_entity) }}).
-                        {{ retry_notification_details | trim }}
                   - stop: Nie potwierdzono startu koszenia po dwoch probach.
           - condition: template
             alias: Normalne koszenie rozpoczete
@@ -2086,15 +1972,6 @@ actions:
           - variables:
               normal_mowing_started_at: "{{ now().strftime('%d.%m %H:%M') }}"
               normal_mowing_started_ts: "{{ as_timestamp(now()) }}"
-          - action: persistent_notification.create
-            data:
-              notification_id: "{{ notification_id }}"
-              title: "Worx: trwa koszenie"
-              message: >-
-                Start cyklu: {{ mowing_cycle_started_at }}.
-                Krawędzie zakończone.
-                Zwykłe koszenie rozpoczęte: {{ normal_mowing_started_at }}.
-                Bateria: {{ states(battery_sensor) }}%.
           - alias: Koszenie przez wyliczony czas albo do deszczu
             repeat:
               while:

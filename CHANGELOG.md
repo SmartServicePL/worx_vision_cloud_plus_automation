@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Limited notifications to the daily growth calculation, mowing start, and mowing completion/interruption after a real start.
+- Kept the 30-minute condition refresh silent so forecast changes no longer show fluctuating projected growth as stored accumulated growth.
+
 ## 0.4.1 - 2026-06-29
 
 - Fixed automatic planning so an unsafe preferred hour is replaced with the nearest safe daytime forecast slot instead of being reported as a planned start.

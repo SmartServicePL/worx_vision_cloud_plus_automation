@@ -38,6 +38,8 @@ The automatic start threshold is tuned for robotic mowing. Instead of waiting fo
 
 In automatic mode the blueprint checks hourly forecasts and rejects unsafe slots. By default, mowing is allowed only between `10 C` and `25 C`. If the selected daytime window has no safe slot, the blueprint looks for the nearest safe time between `06:00` and `22:00`. Night mowing from `22:00` to `05:00` is available only when the user confirms that the mower has the FiatLux lighting accessory installed.
 
+Long hourly forecasts are capped to the planning horizon, so providers such as Pirate Weather can return many forecast records without making the Home Assistant template exceed its output limit.
+
 Conditions and forecasts are refreshed every 30 minutes without sending extra notifications. Notifications are limited to the daily grass-growth calculation, mowing start, and mowing completion or interruption after a real start.
 
 ## Before You Start

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Limited hourly forecast processing to the planning horizon so long Pirate Weather responses no longer exceed Home Assistant's template output limit.
+- Fixed missing final notifications for interrupted mowing cycles after the edge pass had already started.
+- Clarified "no safe slot" notification text so it no longer labels the planned retry time as the next condition refresh.
 - Reworked the GitHub README and blueprint description into clearer sections for new users.
 - Limited notifications to the daily growth calculation, mowing start, and mowing completion/interruption after a real start.
 - Kept the 30-minute condition refresh silent so forecast changes no longer show fluctuating projected growth as stored accumulated growth.

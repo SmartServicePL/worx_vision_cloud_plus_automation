@@ -82,6 +82,7 @@ The next planned mowing helper is updated after the daily growth calculation.
 In automatic mode the blueprint:
 
 - checks 15-minute forecast slots over the next few days,
+- limits very long hourly forecast lists to the planning horizon, which keeps Pirate Weather responses within Home Assistant's template size limit,
 - starts from the selected mowing window preset: morning, before noon, noon, afternoon, evening, night, or custom hours,
 - rejects slots with rain, high rain probability, wet grass risk, unsafe humidity, or temperatures outside the configured mowing range,
 - uses `06:00-22:00` as a daytime fallback when the selected daytime window has no safe slot,

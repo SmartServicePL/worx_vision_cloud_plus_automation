@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added a fast technical retry after interrupted starts when the mower is docked and current conditions are still safe, instead of waiting for the backup hour.
 - Reworked mowing notifications into readable multi-section messages with preserved line breaks.
 - Stabilized dock confirmation after edge cutting and normal mowing so brief Worx Cloud `returning`/`unknown` flaps do not interrupt the cycle when RTK still shows the mower at the station.
 - Added a weather-source note recommending Tomorrow.io when the user does not have a local weather station.

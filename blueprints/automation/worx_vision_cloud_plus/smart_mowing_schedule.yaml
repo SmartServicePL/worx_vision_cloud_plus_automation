@@ -1,4 +1,4 @@
-blueprint:
+﻿blueprint:
   name: Worx Vision Cloud PLUS - inteligentny harmonogram koszenia
   description: |
     Inteligentny harmonogram koszenia dla robotów Worx Vision Cloud PLUS,
@@ -1432,12 +1432,45 @@ actions:
                     {{ fallback }}
                   {%- endif -%}
                 {%- endif -%}
+              quick_retry_mow_datetime: >-
+                {%- set delay_seconds = 30 * 60 -%}
+                {%- set step = auto_planning_step_seconds | int(900) -%}
+                {%- set candidate_ts = as_timestamp(now()) + delay_seconds -%}
+                {%- set rounded_ts = ((candidate_ts / step) | round(0, 'ceil') | int) * step -%}
+                {{ rounded_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+              technical_retry_allowed: >-
+                {%- set candidate_ts = as_timestamp(quick_retry_mow_datetime | trim) -%}
+                {%- set candidate_date = candidate_ts | timestamp_custom('%Y-%m-%d', true) -%}
+                {%- set window_start = as_timestamp(candidate_date ~ ' ' ~ primary_start_time_value) -%}
+                {%- set raw_window_end = as_timestamp(candidate_date ~ ' ' ~ backup_start_time_value) -%}
+                {%- set window_end = raw_window_end if raw_window_end > window_start else raw_window_end + 86400 -%}
+                {%- if backup_start_time_value <= primary_start_time_value and candidate_ts < raw_window_end -%}
+                  {%- set window_start = window_start - 86400 -%}
+                  {%- set window_end = raw_window_end -%}
+                {%- endif -%}
+                {%- set within_window = candidate_ts >= window_start and candidate_ts <= window_end -%}
+                {%- set at_station = is_state(mower_entity, 'docked')
+                    or (state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
+                        and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5) -%}
+                {{ within_window
+                   and at_station
+                   and is_state(rain_binary_sensor, 'off')
+                   and (states(battery_sensor) | float(0)) >= (min_battery_percent | float)
+                   and (temp_c | float(-99)) >= (min_mowing_temperature_c | float)
+                   and (temp_c | float(-99)) <= (max_mowing_temperature_c | float)
+                   and (start_block_reason | trim | length) == 0 }}
+              retry_mow_datetime: >-
+                {%- if (technical_retry_allowed | string | lower) == 'true' -%}
+                  {{ quick_retry_mow_datetime | trim }}
+                {%- else -%}
+                  {{ planned_retry_mow_datetime | trim }}
+                {%- endif -%}
           - variables:
               current_time_label: >-
                 {% set ts = as_timestamp(now()) %}
                 dziś o {{ ts | timestamp_custom('%H:%M', true) }}
               planned_retry_mow_label: >-
-                {% set raw = planned_retry_mow_datetime | trim %}
+                {% set raw = retry_mow_datetime | trim %}
                 {% set ts = as_timestamp(raw) %}
                 {% set target_midnight = as_timestamp((ts | timestamp_custom('%Y-%m-%d', true)) ~ ' 00:00:00') %}
                 {% set today_midnight = as_timestamp(today_at('00:00:00')) %}
@@ -1447,12 +1480,14 @@ actions:
                 {% elif days == 2 %}za 2 dni o {{ ts | timestamp_custom('%H:%M', true) }}
                 {% else %}za {{ days }} dni o {{ ts | timestamp_custom('%H:%M', true) }}{% endif %}
               planned_retry_mow_reason: >-
-                {% if planning_mode != 'auto' or weather_forecast_at_start is not defined %}
+                {% if (technical_retry_allowed | string | lower) == 'true' %}
+                  to szybka ponowna próba po przerwaniu technicznym; aktualne warunki pozwalają spróbować ponownie bez czekania do końca okna
+                {% elif planning_mode != 'auto' or weather_forecast_at_start is not defined %}
                   wybrano kolejny termin z ustawionego okna koszenia, bez oceny prognozy godzinowej
                 {% else %}
                   {% set items = weather_forecast_at_start.get(rain_source_entity, {}).get('forecast', []) %}
                   {% set limited_items = items[:(weather_forecast_max_items | int(120))] %}
-                  {% set ts = as_timestamp(planned_retry_mow_datetime | trim) %}
+                  {% set ts = as_timestamp(retry_mow_datetime | trim) %}
                   {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
                   {% set urgent_growth = (planning_growth_mm | float(0)) >= (high_growth_threshold_mm | float(999)) %}
                   {% set fc = namespace(seen=0, rain=0, probability=0, temp=temp_c | float(10), wind=0, humidity=60, condition='') %}
@@ -1509,7 +1544,7 @@ actions:
                 {% else %}
                   {% set items = weather_forecast_at_start.get(rain_source_entity, {}).get('forecast', []) %}
                   {% set limited_items = items[:(weather_forecast_max_items | int(120))] %}
-                  {% set ts = as_timestamp(planned_retry_mow_datetime | trim) %}
+                  {% set ts = as_timestamp(retry_mow_datetime | trim) %}
                   {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
                   {% set fc = namespace(seen=0, rain=0, probability=0, temp=temp_c | float(10), humidity=60, condition='') %}
                   {% set recent = namespace(wet=0) %}
@@ -1569,6 +1604,13 @@ actions:
 
                 Prognoza podczas koszenia:
                 {{ (planned_retry_mow_forecast | trim).split(';', 1)[1] }}.
+                {% elif (technical_retry_allowed | string | lower) == 'true' %}
+                Następna próba:
+                {{ planned_retry_mow_label | trim }}.
+
+                Uwagi:
+                To szybka ponowna próba po przerwaniu technicznym.
+                Aktualne warunki są spełnione, więc automatyzacja nie czeka do końca okna koszenia.
                 {% else %}
                 Następna próba:
                 {{ planned_retry_mow_label | trim }}.
@@ -1593,7 +1635,7 @@ actions:
                             target:
                               entity_id: "{{ next_mow_helper }}"
                             data:
-                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                              datetime: "{{ retry_mow_datetime | trim }}"
                   - stop: Warunki koszenia nie sa spelnione; przesunieto nastepne koszenie.
           - variables:
               mowing_cycle_started_at: "{{ now().strftime('%d.%m %H:%M') }}"
@@ -1632,7 +1674,7 @@ actions:
                             target:
                               entity_id: "{{ next_mow_helper }}"
                             data:
-                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                              datetime: "{{ retry_mow_datetime | trim }}"
                   - stop: Przycinanie krawedzi przerwane przez deszcz.
               - conditions:
                   - condition: template
@@ -1672,7 +1714,7 @@ actions:
                             target:
                               entity_id: "{{ next_mow_helper }}"
                             data:
-                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                              datetime: "{{ retry_mow_datetime | trim }}"
                   - stop: Przycinanie krawedzi przerwane przez deszcz po ponowieniu.
               - conditions:
                   - condition: template
@@ -1687,7 +1729,7 @@ actions:
                             target:
                               entity_id: "{{ next_mow_helper }}"
                             data:
-                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                              datetime: "{{ retry_mow_datetime | trim }}"
                   - stop: Nie potwierdzono startu przycinania krawedzi po dwoch probach.
           - condition: template
             alias: Przycinanie krawedzi rozpoczete
@@ -1756,7 +1798,7 @@ actions:
                             target:
                               entity_id: "{{ next_mow_helper }}"
                             data:
-                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                              datetime: "{{ retry_mow_datetime | trim }}"
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
@@ -1797,7 +1839,7 @@ actions:
                             target:
                               entity_id: "{{ next_mow_helper }}"
                             data:
-                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                              datetime: "{{ retry_mow_datetime | trim }}"
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
@@ -1841,7 +1883,7 @@ actions:
                             target:
                               entity_id: "{{ next_mow_helper }}"
                             data:
-                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                              datetime: "{{ retry_mow_datetime | trim }}"
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
@@ -1874,7 +1916,7 @@ actions:
                             target:
                               entity_id: "{{ next_mow_helper }}"
                             data:
-                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                              datetime: "{{ retry_mow_datetime | trim }}"
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
@@ -1904,7 +1946,7 @@ actions:
                             target:
                               entity_id: "{{ next_mow_helper }}"
                             data:
-                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                              datetime: "{{ retry_mow_datetime | trim }}"
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
@@ -2055,7 +2097,7 @@ actions:
                             target:
                               entity_id: "{{ next_mow_helper }}"
                             data:
-                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                              datetime: "{{ retry_mow_datetime | trim }}"
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
@@ -2109,7 +2151,7 @@ actions:
                             target:
                               entity_id: "{{ next_mow_helper }}"
                             data:
-                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                              datetime: "{{ retry_mow_datetime | trim }}"
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
@@ -2139,7 +2181,7 @@ actions:
                             target:
                               entity_id: "{{ next_mow_helper }}"
                             data:
-                              datetime: "{{ planned_retry_mow_datetime | trim }}"
+                              datetime: "{{ retry_mow_datetime | trim }}"
                   - action: persistent_notification.create
                     data:
                       notification_id: "{{ notification_id }}"
@@ -2553,7 +2595,7 @@ actions:
                         target:
                           entity_id: "{{ next_mow_helper }}"
                         data:
-                          datetime: "{{ planned_retry_mow_datetime | trim }}"
+                          datetime: "{{ retry_mow_datetime | trim }}"
               - action: persistent_notification.create
                 data:
                   notification_id: "{{ notification_id }}"

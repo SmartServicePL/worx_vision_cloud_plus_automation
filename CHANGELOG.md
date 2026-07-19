@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Reworked mowing notifications into readable multi-section messages with preserved line breaks.
+- Stabilized dock confirmation after edge cutting and normal mowing so brief Worx Cloud `returning`/`unknown` flaps do not interrupt the cycle when RTK still shows the mower at the station.
+- Added a weather-source note recommending Tomorrow.io when the user does not have a local weather station.
 - Limited hourly forecast processing to the planning horizon so long Pirate Weather responses no longer exceed Home Assistant's template output limit.
 - Fixed missing final notifications for interrupted mowing cycles after the edge pass had already started.
 - Clarified "no safe slot" notification text so it no longer labels the planned retry time as the next condition refresh.

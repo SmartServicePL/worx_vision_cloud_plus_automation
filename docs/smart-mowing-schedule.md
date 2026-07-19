@@ -79,6 +79,8 @@ When those conditions are met, the automation first sends the dedicated edge-onl
 
 The next planned mowing helper is updated after the daily growth calculation.
 
+For the best local decisions, use your own weather station or local outdoor sensors when available. If you do not have a weather station, the Tomorrow.io weather integration is recommended as the hourly forecast source.
+
 In automatic mode the blueprint:
 
 - checks 15-minute forecast slots over the next few days,

@@ -13,6 +13,11 @@ blueprint:
     - omija deszcz, świeżo mokry trawnik i temperatury poza ustawionym zakresem,
     - preferuje częste, lekkie koszenie robotem zamiast czekania na wysoką trawę.
 
+    Źródło pogody:
+    - najlepsze dane daje własna stacja pogodowa lub lokalne czujniki,
+    - jeśli nie masz własnej stacji pogodowej, zalecane jest użycie integracji
+      pogodowej Tomorrow.io jako źródła prognozy godzinowej.
+
     Jak wygląda cykl koszenia:
     1. Home Assistant uruchamia osobne przycinanie krawędzi.
     2. Automatyzacja czeka, aż robot wróci do bazy.
@@ -82,7 +87,7 @@ blueprint:
                 - domain: weather
         rain_source_entity:
           name: Opad albo prognoza
-          description: Najlepiej wybierz encje weather, wtedy automatyzacja moze dobrac godzine z prognozy godzinowej.
+          description: Najlepiej wybierz encje weather, wtedy automatyzacja moze dobrac godzine z prognozy godzinowej. Jesli nie masz wlasnej stacji pogodowej, zalecane jest uzycie integracji pogodowej Tomorrow.io.
           selector:
             entity:
               filter:
@@ -967,11 +972,14 @@ actions:
             data:
               notification_id: "{{ notification_id }}"
               title: "Worx: koszenie ręczne zakończone"
-              message: >-
-                Start: {{ manual_mow_started_at }}.
-                Koniec: {{ manual_mow_finished_label }}.
+              message: |
+                Czas:
+                Start: {{ manual_mow_started_at }}
+                Koniec: {{ manual_mow_finished_label }}
                 Czas koszenia: {{ manual_mow_duration_minutes }} min.
-                Następne: {{ manual_next_mow_label | trim }}.
+
+                Następne koszenie:
+                {{ manual_next_mow_label | trim }}
 
       - conditions:
           - condition: template
@@ -1271,18 +1279,23 @@ actions:
                         {% else %}
                           Worx: oczekiwanie na warunki
                         {% endif %}
-                      message: >-
+                      message: |
                         Skumulowany przyrost: {{ new_growth_mm }} mm
                         (próg {{ growth_threshold_mm }} mm).
                         {% if (planned_next_mow_forecast | trim).startswith('safe;') %}
-                        Koszenie: {{ planned_next_mow_label | trim }}.
-                        Prognozowane warunki podczas koszenia:
+                        Koszenie:
+                        {{ planned_next_mow_label | trim }}.
+
+                        Prognoza podczas koszenia:
                         {{ (planned_next_mow_forecast | trim).split(';', 1)[1] }}.
+
                         Powód wyboru: {{ planned_next_mow_reason | trim }}.
                         {% else %}
-                        Nie znaleziono jeszcze bezpiecznej godziny koszenia.
-                        Orientacyjny termin kolejnej próby:
+                        Następna próba:
                         {{ planned_next_mow_label | trim }}.
+
+                        Uwagi:
+                        Nie znaleziono jeszcze bezpiecznej godziny koszenia.
                         Warunki będą sprawdzane co 30 minut.
                         {% endif %}
 
@@ -1546,16 +1559,22 @@ actions:
                   {{ 'safe' if safe else 'unsafe' }};{{ condition_label }}, temperatura {{ fc.temp | round(1) }} st. C, opad {{ fc.rain | round(1) }} mm, ryzyko deszczu {{ fc.probability | round(0) }}%, wilgotność {{ fc.humidity | round(0) }}%
                 {% endif %}
           - variables:
-              retry_notification_details: >-
+              retry_notification_details: |
+                Trawa:
                 Skumulowany przyrost: {{ estimated_growth_mm }} mm.
+
                 {% if (planned_retry_mow_forecast | trim).startswith('safe;') %}
-                Następne koszenie: {{ planned_retry_mow_label | trim }}.
-                Prognozowane warunki podczas koszenia:
+                Następne koszenie:
+                {{ planned_retry_mow_label | trim }}.
+
+                Prognoza podczas koszenia:
                 {{ (planned_retry_mow_forecast | trim).split(';', 1)[1] }}.
                 {% else %}
-                Nie znaleziono jeszcze bezpiecznej godziny koszenia.
-                Orientacyjny termin kolejnej próby:
+                Następna próba:
                 {{ planned_retry_mow_label | trim }}.
+
+                Uwagi:
+                Nie znaleziono jeszcze bezpiecznej godziny koszenia.
                 Warunki będą sprawdzane co 30 minut.
                 {% endif %}
           - choose:
@@ -1679,15 +1698,37 @@ actions:
             data:
               notification_id: "{{ notification_id }}"
               title: "Worx: koszenie rozpoczęte"
-              message: >-
-                Start: {{ mowing_cycle_started_at }}.
-                Etap: przycinanie krawędzi.
+              message: |
+                Czas:
+                Start: {{ mowing_cycle_started_at }}
+
+                Etap:
+                Przycinanie krawędzi.
                 Następnie robot wróci do bazy, naładuje baterię do
                 {{ post_edge_battery_percent }}% i rozpocznie zwykłe koszenie.
-          - wait_template: "{{ is_state(mower_entity, 'docked') or is_state(rain_binary_sensor, 'on') }}"
+          - wait_template: >-
+              {{ is_state(rain_binary_sensor, 'on')
+                 or is_state(mower_entity, 'docked')
+                 or (state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
+                     and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5) }}
             alias: Poczekaj na zakonczenie krawedzi i powrot do bazy
             timeout: "02:00:00"
             continue_on_timeout: true
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(rain_binary_sensor, 'off') }}"
+                sequence:
+                  - delay: "00:01:00"
+                    alias: Ustabilizuj potwierdzenie bazy po krawedziach
+                  - wait_template: >-
+                      {{ is_state(rain_binary_sensor, 'on')
+                         or is_state(mower_entity, 'docked')
+                         or (state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
+                             and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5) }}
+                    alias: Potwierdz stabilny powrot do bazy po krawedziach
+                    timeout: "00:02:00"
+                    continue_on_timeout: true
           - choose:
               - conditions:
                   - condition: template
@@ -1696,7 +1737,12 @@ actions:
                   - choose:
                       - conditions:
                           - condition: template
-                            value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                            value_template: >-
+                              {{ states(mower_entity) not in ['docked', 'unavailable', 'unknown']
+                                 and not (
+                                   state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
+                                   and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5
+                                 ) }}
                         sequence:
                           - action: lawn_mower.dock
                             target:
@@ -1715,15 +1761,24 @@ actions:
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie przerwane"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Koniec: {{ now().strftime('%d.%m %H:%M') }}.
-                        Powód: deszcz przerwał przycinanie krawędzi.
+                      message: |
+                        Czas:
+                        Start: {{ mowing_cycle_started_at }}
+                        Koniec: {{ now().strftime('%d.%m %H:%M') }}
+
+                        Powód:
+                        Deszcz przerwał przycinanie krawędzi.
+
                         {{ retry_notification_details | trim }}
                   - stop: Deszcz przerwal etap krawedzi.
               - conditions:
                   - condition: template
-                    value_template: "{{ not is_state(mower_entity, 'docked') }}"
+                    value_template: >-
+                      {{ not is_state(mower_entity, 'docked')
+                         and not (
+                           state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
+                           and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5
+                         ) }}
                 sequence:
                   - choose:
                       - conditions:
@@ -1747,17 +1802,27 @@ actions:
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie przerwane"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Koniec: {{ now().strftime('%d.%m %H:%M') }}.
-                        Powód: robot nie wrócił do bazy po krawędziach.
+                      message: |
+                        Czas:
+                        Start: {{ mowing_cycle_started_at }}
+                        Koniec: {{ now().strftime('%d.%m %H:%M') }}
+
+                        Powód:
+                        Robot nie wrócił do bazy po krawędziach.
+
                         {{ retry_notification_details | trim }}
                   - stop: Nie potwierdzono powrotu do bazy po krawedziach.
           - variables:
               edge_mowing_finished_ts: "{{ as_timestamp(now()) }}"
           - wait_template: >-
               {{ is_state(rain_binary_sensor, 'on')
-                 or not is_state(mower_entity, 'docked')
+                 or (
+                   not is_state(mower_entity, 'docked')
+                   and not (
+                     state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
+                     and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5
+                   )
+                 )
                  or (states(battery_sensor) | float(0)) >= (post_edge_battery_percent | float(80)) }}
             alias: Poczekaj w bazie na naladowanie baterii do 80 procent
             timeout: "08:00:00"
@@ -1781,15 +1846,24 @@ actions:
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie przerwane"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Koniec: {{ now().strftime('%d.%m %H:%M') }}.
-                        Powód: po krawędziach, podczas ładowania, zaczął padać deszcz.
+                      message: |
+                        Czas:
+                        Start: {{ mowing_cycle_started_at }}
+                        Koniec: {{ now().strftime('%d.%m %H:%M') }}
+
+                        Powód:
+                        Po krawędziach, podczas ładowania, zaczął padać deszcz.
+
                         {{ retry_notification_details | trim }}
                   - stop: Po krawedziach zaczal padac deszcz.
               - conditions:
                   - condition: template
-                    value_template: "{{ not is_state(mower_entity, 'docked') }}"
+                    value_template: >-
+                      {{ not is_state(mower_entity, 'docked')
+                         and not (
+                           state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
+                           and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5
+                         ) }}
                 sequence:
                   - choose:
                       - conditions:
@@ -1805,10 +1879,14 @@ actions:
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie przerwane"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Koniec: {{ now().strftime('%d.%m %H:%M') }}.
-                        Powód: robot opuścił bazę podczas ładowania po krawędziach.
+                      message: |
+                        Czas:
+                        Start: {{ mowing_cycle_started_at }}
+                        Koniec: {{ now().strftime('%d.%m %H:%M') }}
+
+                        Powód:
+                        Robot opuścił bazę podczas ładowania po krawędziach.
+
                         {{ retry_notification_details | trim }}
                   - stop: Robot opuscil baze podczas ladowania po krawedziach.
               - conditions:
@@ -1831,11 +1909,15 @@ actions:
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie przerwane"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Koniec: {{ now().strftime('%d.%m %H:%M') }}.
-                        Powód: bateria nie osiągnęła 80% w ciągu 8 godzin
-                        (aktualnie {{ states(battery_sensor) }}%).
+                      message: |
+                        Czas:
+                        Start: {{ mowing_cycle_started_at }}
+                        Koniec: {{ now().strftime('%d.%m %H:%M') }}
+
+                        Powód:
+                        Bateria nie osiągnęła 80% w ciągu 8 godzin.
+                        Aktualnie: {{ states(battery_sensor) }}%.
+
                         {{ retry_notification_details | trim }}
                   - stop: Bateria nie osiagnela 80 procent po krawedziach.
           - variables:
@@ -1880,16 +1962,23 @@ actions:
                 {% elif days == 1 %}jutro o {{ ts | timestamp_custom('%H:%M', true) }}
                 {% elif days == 2 %}za 2 dni o {{ ts | timestamp_custom('%H:%M', true) }}
                 {% else %}za {{ days }} dni o {{ ts | timestamp_custom('%H:%M', true) }}{% endif %}
-              temperature_retry_notification_details: >-
+              temperature_retry_notification_details: |
+                Trawa:
                 Skumulowany przyrost: {{ estimated_growth_mm }} mm.
+
                 {% if (planned_retry_mow_forecast | trim).startswith('safe;')
                       and (temperature_retry_datetime | trim) == (planned_retry_mow_datetime | trim) %}
-                Następne koszenie: {{ temperature_retry_label | trim }}.
-                Prognozowane warunki podczas koszenia:
+                Następne koszenie:
+                {{ temperature_retry_label | trim }}.
+
+                Prognoza podczas koszenia:
                 {{ (planned_retry_mow_forecast | trim).split(';', 1)[1] }}.
                 {% else %}
+                Następna próba:
+                {{ temperature_retry_label | trim }}.
+
+                Uwagi:
                 Nie znaleziono jeszcze bezpiecznej godziny koszenia.
-                Orientacyjny termin kolejnej próby: {{ temperature_retry_label | trim }}.
                 Warunki będą sprawdzane co 30 minut.
                 {% endif %}
           - choose:
@@ -1911,16 +2000,22 @@ actions:
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie przerwane"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Koniec: {{ now().strftime('%d.%m %H:%M') }}.
-                        Powód: {{ temperature_after_edges_block_reason | trim }}.
+                      message: |
+                        Czas:
+                        Start: {{ mowing_cycle_started_at }}
+                        Koniec: {{ now().strftime('%d.%m %H:%M') }}
+
+                        Powód:
+                        {{ temperature_after_edges_block_reason | trim }}.
+
                         {{ temperature_retry_notification_details | trim }}
                   - stop: Temperatura po krawedziach jest poza zakresem koszenia.
           - condition: template
             alias: Robot w bazie, bateria minimum 80 procent i bezpieczna temperatura
             value_template: >-
-              {{ is_state(mower_entity, 'docked')
+              {{ (is_state(mower_entity, 'docked')
+                  or (state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
+                      and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5))
                  and (states(battery_sensor) | float(0)) >= (post_edge_battery_percent | float(80))
                  and (temperature_after_edges_c | float(-99)) >= (min_mowing_temperature_c | float(10))
                  and (temperature_after_edges_c | float(-99)) <= (max_mowing_temperature_c | float(25))
@@ -1965,10 +2060,14 @@ actions:
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie przerwane"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Koniec: {{ now().strftime('%d.%m %H:%M') }}.
-                        Powód: deszcz przed startem zwykłego koszenia.
+                      message: |
+                        Czas:
+                        Start: {{ mowing_cycle_started_at }}
+                        Koniec: {{ now().strftime('%d.%m %H:%M') }}
+
+                        Powód:
+                        Deszcz przed startem zwykłego koszenia.
+
                         {{ retry_notification_details | trim }}
                   - stop: Start koszenia przerwany przez deszcz.
               - conditions:
@@ -2015,10 +2114,14 @@ actions:
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie przerwane"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Koniec: {{ now().strftime('%d.%m %H:%M') }}.
-                        Powód: deszcz podczas ponownego startu zwykłego koszenia.
+                      message: |
+                        Czas:
+                        Start: {{ mowing_cycle_started_at }}
+                        Koniec: {{ now().strftime('%d.%m %H:%M') }}
+
+                        Powód:
+                        Deszcz podczas ponownego startu zwykłego koszenia.
+
                         {{ retry_notification_details | trim }}
                   - stop: Start koszenia przerwany przez deszcz po ponowieniu.
           - choose:
@@ -2041,11 +2144,15 @@ actions:
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie przerwane"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Koniec: {{ now().strftime('%d.%m %H:%M') }}.
-                        Powód: zwykłe koszenie nie wystartowało po dwóch próbach
-                        (stan: {{ states(mower_entity) }}).
+                      message: |
+                        Czas:
+                        Start: {{ mowing_cycle_started_at }}
+                        Koniec: {{ now().strftime('%d.%m %H:%M') }}
+
+                        Powód:
+                        Zwykłe koszenie nie wystartowało po dwóch próbach.
+                        Stan robota: {{ states(mower_entity) }}.
+
                         {{ retry_notification_details | trim }}
                   - stop: Nie potwierdzono startu koszenia po dwoch probach.
           - condition: template
@@ -2074,10 +2181,29 @@ actions:
                   - action: lawn_mower.dock
                     target:
                       entity_id: !input mower_entity
-          - wait_template: "{{ is_state(mower_entity, 'docked') or is_state(rain_binary_sensor, 'on') }}"
+          - wait_template: >-
+              {{ is_state(rain_binary_sensor, 'on')
+                 or is_state(mower_entity, 'docked')
+                 or (state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
+                     and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5) }}
             alias: Poczekaj na powrot do bazy po normalnym koszeniu
             timeout: "00:30:00"
             continue_on_timeout: true
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(rain_binary_sensor, 'off') }}"
+                sequence:
+                  - delay: "00:01:00"
+                    alias: Ustabilizuj potwierdzenie bazy po normalnym koszeniu
+                  - wait_template: >-
+                      {{ is_state(rain_binary_sensor, 'on')
+                         or is_state(mower_entity, 'docked')
+                         or (state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
+                             and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5) }}
+                    alias: Potwierdz stabilny powrot do bazy po normalnym koszeniu
+                    timeout: "00:02:00"
+                    continue_on_timeout: true
           - variables:
               mowing_cycle_finished_at: "{{ now().strftime('%d.%m %H:%M') }}"
               edge_mowing_minutes: >-
@@ -2106,7 +2232,13 @@ actions:
                   - condition: template
                     value_template: >-
                       {{ is_state(rain_binary_sensor, 'off')
-                         and is_state(mower_entity, 'docked') }}
+                         and (
+                           is_state(mower_entity, 'docked')
+                           or (
+                             state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
+                             and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5
+                           )
+                         ) }}
                 sequence:
                   - choose:
                       - conditions:
@@ -2381,22 +2513,29 @@ actions:
                     data:
                       notification_id: "{{ notification_id }}"
                       title: "Worx: koszenie zakończone"
-                      message: >-
-                        Start: {{ mowing_cycle_started_at }}.
-                        Koniec: {{ mowing_cycle_finished_at }}.
-                        Czas koszenia: {{ mowing_duration_label | trim }}
-                        (krawędzie {{ edge_mowing_minutes }} min, zwykłe
-                        {{ normal_mowing_minutes }} min).
-                        Cały cykl z ładowaniem: {{ whole_cycle_duration_label | trim }}.
+                      message: |
+                        Czas:
+                        Start: {{ mowing_cycle_started_at }}
+                        Koniec: {{ mowing_cycle_finished_at }}
+                        Koszenie: {{ mowing_duration_label | trim }}
+                        Krawędzie: {{ edge_mowing_minutes }} min
+                        Zwykłe koszenie: {{ normal_mowing_minutes }} min
+                        Cały cykl z ładowaniem: {{ whole_cycle_duration_label | trim }}
+
+                        Trawa:
                         Skumulowany przyrost: 0 mm.
+
                         {% if (planned_next_after_reset_forecast | trim).startswith('safe;') %}
                         Następne koszenie:
                         {{ planned_next_after_reset_label | trim }}.
-                        Prognozowane warunki podczas koszenia:
+
+                        Prognoza podczas koszenia:
                         {{ (planned_next_after_reset_forecast | trim).split(';', 1)[1] }}.
                         {% else %}
-                        Orientacyjny termin kolejnej próby:
+                        Następna próba:
                         {{ planned_next_after_reset_label | trim }}.
+
+                        Uwagi:
                         Warunki będą sprawdzane co 30 minut.
                         {% endif %}
             default:
@@ -2419,13 +2558,18 @@ actions:
                 data:
                   notification_id: "{{ notification_id }}"
                   title: "Worx: koszenie przerwane"
-                  message: >-
-                    Start: {{ mowing_cycle_started_at }}.
-                    Koniec: {{ mowing_cycle_finished_at }}.
-                    Czas pracy: {{ mowing_duration_label | trim }}.
+                  message: |
+                    Czas:
+                    Start: {{ mowing_cycle_started_at }}
+                    Koniec: {{ mowing_cycle_finished_at }}
+                    Czas pracy: {{ mowing_duration_label | trim }}
+
                     {% if is_state(rain_binary_sensor, 'on') %}
-                    Powód: deszcz.
+                    Powód:
+                    Deszcz.
                     {% else %}
-                    Powód: robot nie potwierdził powrotu do bazy.
+                    Powód:
+                    Robot nie potwierdził powrotu do bazy.
                     {% endif %}
+
                     {{ retry_notification_details | trim }}

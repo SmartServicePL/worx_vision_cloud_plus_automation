@@ -10,6 +10,7 @@
 - Improved wet-grass protection for installations without a local weather station by retaining mower rain-sensor drying time and allowing an optional hourly `weather` source.
 - Corrected last-mow and notification timestamps so they use the actual final dock time rather than the later stability-confirmation time.
 - Clarified cycle duration notifications and kept routine 30-minute condition refreshes silent.
+- Fixed the release workflow so dated changelog headings publish the correct semantic version tag.
 
 ## 0.4.2 - 2026-07-19
 

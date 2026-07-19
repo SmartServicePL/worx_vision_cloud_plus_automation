@@ -28,7 +28,10 @@ jobs:
           from pathlib import Path
           for line in Path("CHANGELOG.md").read_text(encoding="utf-8").splitlines():
               if line.startswith("## "):
-                  print(line[3:].strip())
+                  heading = line[3:].strip()
+                  if heading.lower() == "unreleased":
+                      continue
+                  print(heading.split(" - ", 1)[0].strip())
                   break
           PY
           )"
@@ -48,7 +51,7 @@ jobs:
                   heading = line[3:].strip()
                   if capture:
                       break
-                  capture = heading == version
+                  capture = heading.split(" - ", 1)[0].strip() == version
                   continue
               if capture:
                   notes.append(line)

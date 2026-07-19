@@ -2,9 +2,9 @@
   <img src="assets/worx-vision-cloud-plus-automation.png" alt="Worx Vision Cloud PLUS - Smart Mowing Automation for Home Assistant" width="100%">
 </p>
 
-Smart mowing automation for Worx Vision Cloud PLUS / Landroid Vision mowers in Home Assistant.
+Smart mowing automation for Worx mowers in Home Assistant, focused on Worx Vision / RTK models and still compatible with older wired Worx mowers.
 
-This blueprint replaces a rigid mowing timetable with a weather-aware schedule. It estimates grass growth, chooses a dry and sensible mowing window, starts edge cutting first, then starts normal mowing after the mower returns to the dock and recharges.
+This blueprint replaces a rigid mowing timetable with a weather-aware schedule. It estimates grass growth, chooses a dry and sensible mowing window, starts edge cutting first, then starts normal mowing after the mower returns to the dock and recharges. Vision / RTK mowers are monitored until they finish by themselves; older wired Worx mowers can still use a calculated runtime.
 
 This repository is separated from the custom integration repository on purpose:
 
@@ -29,6 +29,7 @@ https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/bl
 - Uses weather, rain, temperature, sunlight/UV, optional soil moisture, irrigation and fertilization settings.
 - Selects the best mowing time in the chosen time window, avoiding rain, wet grass and unsafe temperatures.
 - Runs edge cutting first, waits for the mower to return to the dock and recharge to at least `80%`, then starts normal one-time mowing.
+- Lets the user choose the mower cycle type: Vision / RTK self-finishing mowing or older wired Worx timed mowing.
 - Keeps three helpers updated: estimated grass growth, last full mowing, and next planned mowing.
 - Detects manual mowing started from the WORX app and resets the growth estimate after the mower returns to the dock.
 
@@ -68,7 +69,7 @@ blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml
 ## Requirements
 
 - Home Assistant 2025.1.0 or newer.
-- Worx Vision Cloud PLUS integration `1.0.11` or newer installed from [`SmartServicePL/worx_vision_cloud_plus_github`](https://github.com/SmartServicePL/worx_vision_cloud_plus_github).
+- Worx Vision Cloud PLUS integration `1.3.1` or newer installed from [`SmartServicePL/worx_vision_cloud_plus_github`](https://github.com/SmartServicePL/worx_vision_cloud_plus_github).
 - A `lawn_mower` entity for the mower.
 - The one-time mowing service from the Worx Vision Cloud PLUS integration.
 - Battery and rain entities from the integration.

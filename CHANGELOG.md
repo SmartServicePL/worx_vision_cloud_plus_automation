@@ -2,9 +2,16 @@
 
 ## Unreleased
 
+## 0.4.2 - 2026-07-19
+
+- Added a robot type selector: Worx Vision / RTK uses self-finishing map-based mowing, while older Worx boundary-wire mowers keep calculated timed mowing.
+- Reworded runtime settings as advanced compatibility options for older wired Worx mowers.
+- Changed the normal mowing monitor so Vision / RTK cycles wait for the mower to return to the dock instead of ending after the calculated runtime.
+- Edge and normal mowing handoffs now rely on the Worx Cloud `docked` state and no longer treat RTK station proximity as a completed handoff.
+- Ignored edge-only manual/test starts in manual mowing synchronization so a standalone edge pass no longer resets accumulated grass growth.
 - Added a fast technical retry after interrupted starts when the mower is docked and current conditions are still safe, instead of waiting for the backup hour.
 - Reworked mowing notifications into readable multi-section messages with preserved line breaks.
-- Stabilized dock confirmation after edge cutting and normal mowing so brief Worx Cloud `returning`/`unknown` flaps do not interrupt the cycle when RTK still shows the mower at the station.
+- Stabilized dock confirmation after edge cutting and normal mowing so brief Worx Cloud `returning`/`unknown` flaps do not interrupt the cycle before the cloud confirms the mower is docked.
 - Added a weather-source note recommending Tomorrow.io when the user does not have a local weather station.
 - Limited hourly forecast processing to the planning horizon so long Pirate Weather responses no longer exceed Home Assistant's template output limit.
 - Fixed missing final notifications for interrupted mowing cycles after the edge pass had already started.

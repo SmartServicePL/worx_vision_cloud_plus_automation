@@ -2,11 +2,11 @@
 
 [![Open your Home Assistant instance and import this blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSmartServicePL%2Fworx_vision_cloud_plus_automation%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fworx_vision_cloud_plus%2Fsmart_mowing_schedule.yaml)
 
-`blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml` adds a dynamic Home Assistant automation for Worx Vision Cloud PLUS mowers.
+`blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml` adds a dynamic Home Assistant automation for Worx mowers. The default mode is built for Worx Vision / RTK models, and there is a separate timed mode for older Worx mowers with a boundary wire.
 
 The blueprint does not rewrite the schedule stored in Worx Cloud. Instead, it creates a Home Assistant controlled schedule: it estimates grass growth once a day, stores that estimate in a helper, stores the next planned mowing time in a second date/time helper, and starts the mower when the lawn needs a light robotic trim. In automatic mode it searches forecast-based slots inside the selected mowing window and can move the run to a better moment in the next few days. Every planned start uses two separate Worx Vision Cloud PLUS commands: an edge-only pass first, then normal one-time mowing after the mower returns to the dock and recharges to at least `80%`.
 
-This two-step mowing flow requires Worx Vision Cloud PLUS integration `1.0.11` or newer.
+This two-step mowing flow requires Worx Vision Cloud PLUS integration `1.3.1` or newer.
 
 Before enabling this automation, disable the mowing schedule in the WORX app. If both schedules stay active, the app and Home Assistant can start the mower independently, which makes the calculated growth estimate and next-mow time unreliable.
 
@@ -73,9 +73,9 @@ That value is added to the `input_number` helper. At the configured start times,
 
 By default the mowing threshold is calculated for robotic mowing, not for traditional weekly mowing. Robot mowers work best by cutting little and often, so the automatic threshold is intentionally low: about `7.5%` of the selected cutting height, clamped to roughly `2-4.5 mm`. For example, a `40 mm` cutting height gives a start threshold of about `3 mm`, not `13.3 mm`.
 
-The one-third blade rule is still respected, but only as a safety limit. It means the mower should not remove more than about one third of the grass blade in one pass. It is not used as the normal start threshold for a robot mower. If growth gets much higher than the robotic threshold, the automation treats it as intensive growth and increases runtime, while still trying to mow in the next dry, safe window.
+The one-third blade rule is still respected, but only as a safety limit. It means the mower should not remove more than about one third of the grass blade in one pass. It is not used as the normal start threshold for a robot mower. If growth gets much higher than the robotic threshold, the automation treats it as intensive growth and increases mowing urgency. In wired timed mode it also increases the calculated runtime, while still trying to mow in the next dry, safe window.
 
-When those conditions are met, the automation first sends the dedicated edge-only command. If Home Assistant does not see the mower leave the dock, the edge command is sent one more time. After the edge pass, the automation requires a confirmed `docked` state and waits up to eight hours for the battery to reach at least `80%`. Only then does it send the separate normal one-time mowing command with the calculated runtime, again with one retry if the mower does not leave the dock. If rain starts or any required handoff is not confirmed, normal mowing is not started and Home Assistant reports the reason.
+When those conditions are met, the automation first sends the dedicated edge-only command. If Home Assistant does not see the mower leave the dock, the edge command is sent one more time. After the edge pass, the automation requires a confirmed Worx Cloud `docked` state and waits up to eight hours for the battery to reach at least `80%`. Only then does it send the separate normal one-time mowing command, again with one retry if the mower does not leave the dock. For Vision / RTK mowers the robot decides when the mapped area is finished and the automation monitors it until it returns to the dock. For older wired Worx mowers the automation sends the calculated runtime because their one-time mowing mode needs a mowing time.
 
 The next planned mowing helper is updated after the daily growth calculation.
 
@@ -100,7 +100,11 @@ In fixed-time mode the helper still follows the configured primary start and bac
 
 If the mower is started manually from the WORX app or another control and stays in mowing state for at least 10 minutes, the blueprint treats it as a completed manual mowing cycle after the mower returns to the dock. It then resets the estimated growth helper, updates the last-mow helper and moves the next planned mowing helper forward. This keeps Home Assistant's grass-growth model in sync even when a user starts the mower outside the automation.
 
-Runtime is based on lawn size and real mower capacity:
+## Timed Mode For Older Wired Worx
+
+Vision / RTK owners normally do not need to tune mowing runtime. Select **Worx Vision / RTK** as the robot type and let the mower finish according to its map and zones.
+
+For older Worx mowers with a boundary wire, the calculated runtime is based on lawn size and real mower capacity:
 
 ```text
 lawn area m2 / mower capacity m2 per hour * 60 * growth pressure
@@ -121,6 +125,7 @@ Model sources:
 Good first values for most gardens:
 
 - Lawn area: your real mowing area in `m2`.
+- Robot type: use `Worx Vision / RTK` for Vision Cloud and RTK models; use `Older Worx with boundary wire` only when the mower needs a timed one-time mowing command.
 - Mower model: select your WORX model, then leave model correction at `100%` for the first week.
 - Mowing threshold mode: automatic for robotic mowing.
 - Cutting height: your real mower setting, for example `40 mm`; this gives an automatic start threshold of about `3 mm`.

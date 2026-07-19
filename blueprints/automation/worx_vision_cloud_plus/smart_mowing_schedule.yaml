@@ -1,9 +1,8 @@
 ﻿blueprint:
   name: Worx Vision Cloud PLUS - inteligentny harmonogram koszenia
   description: |
-    Inteligentny harmonogram koszenia dla robotów Worx Vision Cloud PLUS,
-    sterowany z Home Assistant zamiast ze sztywnego harmonogramu w aplikacji
-    WORX.
+    Inteligentny harmonogram koszenia dla robotów Worx, sterowany z Home
+    Assistant zamiast ze sztywnego harmonogramu w aplikacji WORX.
 
     Co robi automatyzacja:
     - szacuje dzienny przyrost trawy modelem Growth Potential (GP),
@@ -23,8 +22,13 @@
     2. Automatyzacja czeka, aż robot wróci do bazy.
     3. Robot ładuje baterię do minimum 80%.
     4. Temperatura jest sprawdzana ponownie.
-    5. Dopiero wtedy startuje normalne koszenie jednorazowe z wyliczonym czasem
-       pracy.
+    5. Dopiero wtedy startuje normalne koszenie jednorazowe.
+
+    Typ robota:
+    - Worx Vision / RTK sam kończy koszenie według mapy lub strefy. Użytkownik
+      nie musi ustawiać czasu pełnego koszenia.
+    - Starsze roboty Worx z przewodem granicznym nadal używają wyliczonego
+      czasu pracy, bo tego wymaga ich tryb koszenia jednorazowego.
 
     Tryby pracy:
     - tryb automatyczny wybiera najlepszy termin z prognozy godzinowej,
@@ -38,7 +42,7 @@
     - po zakończeniu albo przerwaniu cyklu po realnym starcie.
 
     Wymagania:
-    - integracja Worx Vision Cloud PLUS 1.0.11 lub nowsza,
+    - integracja Worx Vision Cloud PLUS 1.3.1 lub nowsza,
     - trzy helpery Home Assistant: przyrost trawy, ostatnie koszenie i następne
       planowane koszenie,
     - wyłączony harmonogram koszenia w aplikacji WORX.
@@ -138,9 +142,21 @@
       name: Proste ustawienia
       icon: mdi:tune-variant
       input:
+        mower_cycle_type:
+          name: Typ robota
+          description: Dla Worx Vision / RTK robot sam kończy koszenie według mapy. Dla starszych robotów z przewodem granicznym automatyzacja używa wyliczonego czasu pracy.
+          default: vision_rtk
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - label: Worx Vision / RTK
+                  value: vision_rtk
+                - label: Starszy Worx z przewodem granicznym
+                  value: wired_timed
         mower_model:
           name: Model kosiarki
-          description: Wybierz model WORX Vision / Vision Cloud. Dla innego modelu wybierz tryb reczny.
+          description: Wybierz model WORX Vision / Vision Cloud albo tryb ręczny dla innego modelu.
           default: custom
           selector:
             select:
@@ -353,13 +369,13 @@
               unit_of_measurement: d
               mode: slider
     advanced_runtime_section:
-      name: Zaawansowane - czas pracy
+      name: Zaawansowane - starsze roboty z przewodem
       icon: mdi:timer-cog
       collapsed: true
       input:
         mower_capacity_m2_per_hour:
-          name: Reczna wydajnosc kosiarki
-          description: Uzywane tylko dla modelu "Recznie / inny model".
+          name: Ręczna wydajność kosiarki
+          description: Używane tylko przy typie "Starszy Worx z przewodem granicznym" i modelu "Ręcznie / inny model".
           default: 80
           selector:
             number:
@@ -370,7 +386,7 @@
               mode: slider
         model_capacity_adjustment_percent:
           name: Korekta wydajnosci modelu
-          description: Korekta dla waskich przejazdow, wielu stref albo prostego trawnika.
+          description: Dla starszych robotów z przewodem pozwala skorygować wyliczony czas pracy przy wąskich przejazdach, wielu strefach albo prostym trawniku.
           default: 100
           selector:
             number:
@@ -380,7 +396,7 @@
               unit_of_measurement: "%"
               mode: slider
         min_runtime_minutes:
-          name: Minimalny czas koszenia
+          name: Minimalny czas koszenia dla robota przewodowego
           default: 45
           selector:
             number:
@@ -390,12 +406,12 @@
               unit_of_measurement: min
               mode: slider
         max_runtime_minutes:
-          name: Maksymalny czas koszenia
-          default: 240
+          name: Maksymalny czas koszenia dla robota przewodowego
+          default: 120
           selector:
             number:
               min: 30
-              max: 480
+              max: 120
               step: 15
               unit_of_measurement: min
               mode: slider
@@ -509,6 +525,7 @@ variables:
   growth_helper: !input growth_helper
   last_mow_helper: !input last_mow_helper
   next_mow_helper: !input next_mow_helper
+  mower_cycle_type: !input mower_cycle_type
   mower_model: !input mower_model
   lawn_area_m2: !input lawn_area_m2
   manual_mower_capacity_m2_per_hour: !input mower_capacity_m2_per_hour
@@ -782,6 +799,24 @@ variables:
   normal_mowing_runtime_minutes: >-
     {% set runtime = recommended_runtime_minutes | int(60) %}
     {% if runtime < 10 %}10{% elif runtime > 120 %}120{% else %}{{ runtime }}{% endif %}
+  normal_mowing_command_runtime_minutes: >-
+    {% if mower_cycle_type == 'vision_rtk' %}
+      120
+    {% else %}
+      {{ normal_mowing_runtime_minutes }}
+    {% endif %}
+  normal_mowing_monitor_limit_minutes: >-
+    {% if mower_cycle_type == 'vision_rtk' %}
+      480
+    {% else %}
+      {{ normal_mowing_runtime_minutes }}
+    {% endif %}
+  normal_mowing_mode_label: >-
+    {% if mower_cycle_type == 'vision_rtk' %}
+      robot Vision / RTK sam kończy koszenie według mapy; czas w komendzie jest tylko technicznym limitem bezpieczeństwa
+    {% else %}
+      starszy robot z przewodem używa wyliczonego czasu {{ normal_mowing_runtime_minutes }} min
+    {% endif %}
   next_mow_datetime: >-
     {% set planned_growth = new_growth_mm | float if trigger.id == 'update_growth' else estimated_growth_mm | float %}
     {% set missing_growth = (growth_threshold_mm | float) - planned_growth %}
@@ -921,6 +956,8 @@ actions:
             value_template: "{{ trigger.id == 'external_mowing_started' }}"
           - condition: template
             value_template: "{{ state_attr(mower_entity, 'rtk_at_station') != true }}"
+          - condition: template
+            value_template: "{{ trigger.to_state.attributes.status_id | int(-1) != 32 }}"
         sequence:
           - variables:
               manual_mow_started_ts: "{{ as_timestamp(trigger.to_state.last_changed) }}"
@@ -1005,8 +1042,33 @@ actions:
                   unknown
                 {% endif %}
           - variables:
-              planned_next_mow_datetime: >-
+              preserved_next_mow_datetime: >-
+                {%- set previous = previous_next_mow_datetime | trim -%}
                 {%- set fallback = stable_next_mow_datetime | trim -%}
+                {%- if previous in ['unknown', 'unavailable', 'none', ''] -%}
+                  {{ fallback }}
+                {%- else -%}
+                  {%- set previous_ts = as_timestamp(previous) -%}
+                  {%- set fallback_ts = as_timestamp(fallback) -%}
+                  {%- set now_ts = as_timestamp(now()) -%}
+                  {%- set target_date = previous_ts | timestamp_custom('%Y-%m-%d', true) -%}
+                  {%- set window_start = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) -%}
+                  {%- set raw_window_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) -%}
+                  {%- set window_end = raw_window_end if raw_window_end > window_start else raw_window_end + 86400 -%}
+                  {%- if backup_start_time_value <= primary_start_time_value and previous_ts < raw_window_end -%}
+                    {%- set window_start = window_start - 86400 -%}
+                    {%- set window_end = raw_window_end -%}
+                  {%- endif -%}
+                  {%- set inside_window = previous_ts >= window_start and previous_ts <= window_end -%}
+                  {%- if previous_ts > now_ts + 60 and inside_window and previous_ts <= fallback_ts -%}
+                    {{ previous_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+                  {%- else -%}
+                    {{ fallback }}
+                  {%- endif -%}
+                {%- endif -%}
+          - variables:
+              planned_next_mow_datetime: >-
+                {%- set fallback = preserved_next_mow_datetime | trim -%}
                 {%- if planning_mode != 'auto' or weather_forecast is not defined -%}
                   {{ fallback }}
                 {%- else -%}
@@ -1750,9 +1812,7 @@ actions:
                 {{ post_edge_battery_percent }}% i rozpocznie zwykłe koszenie.
           - wait_template: >-
               {{ is_state(rain_binary_sensor, 'on')
-                 or is_state(mower_entity, 'docked')
-                 or (state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
-                     and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5) }}
+                 or is_state(mower_entity, 'docked') }}
             alias: Poczekaj na zakonczenie krawedzi i powrot do bazy
             timeout: "02:00:00"
             continue_on_timeout: true
@@ -1765,9 +1825,7 @@ actions:
                     alias: Ustabilizuj potwierdzenie bazy po krawedziach
                   - wait_template: >-
                       {{ is_state(rain_binary_sensor, 'on')
-                         or is_state(mower_entity, 'docked')
-                         or (state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
-                             and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5) }}
+                         or is_state(mower_entity, 'docked') }}
                     alias: Potwierdz stabilny powrot do bazy po krawedziach
                     timeout: "00:02:00"
                     continue_on_timeout: true
@@ -1780,11 +1838,7 @@ actions:
                       - conditions:
                           - condition: template
                             value_template: >-
-                              {{ states(mower_entity) not in ['docked', 'unavailable', 'unknown']
-                                 and not (
-                                   state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
-                                   and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5
-                                 ) }}
+                              {{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}
                         sequence:
                           - action: lawn_mower.dock
                             target:
@@ -1816,11 +1870,7 @@ actions:
               - conditions:
                   - condition: template
                     value_template: >-
-                      {{ not is_state(mower_entity, 'docked')
-                         and not (
-                           state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
-                           and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5
-                         ) }}
+                      {{ not is_state(mower_entity, 'docked') }}
                 sequence:
                   - choose:
                       - conditions:
@@ -1850,21 +1900,15 @@ actions:
                         Koniec: {{ now().strftime('%d.%m %H:%M') }}
 
                         Powód:
-                        Robot nie wrócił do bazy po krawędziach.
+                        Chmura Worx nie potwierdziła powrotu robota do bazy po krawędziach.
 
                         {{ retry_notification_details | trim }}
-                  - stop: Nie potwierdzono powrotu do bazy po krawedziach.
+                  - stop: Chmura Worx nie potwierdzila powrotu do bazy po krawedziach.
           - variables:
               edge_mowing_finished_ts: "{{ as_timestamp(now()) }}"
           - wait_template: >-
               {{ is_state(rain_binary_sensor, 'on')
-                 or (
-                   not is_state(mower_entity, 'docked')
-                   and not (
-                     state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
-                     and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5
-                   )
-                 )
+                 or not is_state(mower_entity, 'docked')
                  or (states(battery_sensor) | float(0)) >= (post_edge_battery_percent | float(80)) }}
             alias: Poczekaj w bazie na naladowanie baterii do 80 procent
             timeout: "08:00:00"
@@ -1901,11 +1945,7 @@ actions:
               - conditions:
                   - condition: template
                     value_template: >-
-                      {{ not is_state(mower_entity, 'docked')
-                         and not (
-                           state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
-                           and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5
-                         ) }}
+                      {{ not is_state(mower_entity, 'docked') }}
                 sequence:
                   - choose:
                       - conditions:
@@ -2055,9 +2095,7 @@ actions:
           - condition: template
             alias: Robot w bazie, bateria minimum 80 procent i bezpieczna temperatura
             value_template: >-
-              {{ (is_state(mower_entity, 'docked')
-                  or (state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
-                      and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5))
+              {{ is_state(mower_entity, 'docked')
                  and (states(battery_sensor) | float(0)) >= (post_edge_battery_percent | float(80))
                  and (temperature_after_edges_c | float(-99)) >= (min_mowing_temperature_c | float(10))
                  and (temperature_after_edges_c | float(-99)) <= (max_mowing_temperature_c | float(25))
@@ -2066,7 +2104,7 @@ actions:
             alias: Uruchom normalne koszenie jednorazowe
             data:
               entity_id: !input mower_entity
-              runtime: "{{ normal_mowing_runtime_minutes }}"
+              runtime: "{{ normal_mowing_command_runtime_minutes }}"
               edge_cut: false
               zones: []
           - alias: Poczekaj na potwierdzenie wyjazdu do koszenia
@@ -2120,7 +2158,7 @@ actions:
                     alias: Ponow normalne koszenie jednorazowe
                     data:
                       entity_id: !input mower_entity
-                      runtime: "{{ normal_mowing_runtime_minutes }}"
+                      runtime: "{{ normal_mowing_command_runtime_minutes }}"
                       edge_cut: false
                       zones: []
                   - alias: Poczekaj na potwierdzenie drugiego startu koszenia
@@ -2203,14 +2241,14 @@ actions:
           - variables:
               normal_mowing_started_at: "{{ now().strftime('%d.%m %H:%M') }}"
               normal_mowing_started_ts: "{{ as_timestamp(now()) }}"
-          - alias: Koszenie przez wyliczony czas albo do deszczu
+          - alias: Koszenie do powrotu robota albo limitu bezpieczenstwa
             repeat:
               while:
                 - condition: template
                   value_template: >-
                     {{ is_state(rain_binary_sensor, 'off')
                        and states(mower_entity) not in ['docked', 'paused', 'unavailable', 'unknown']
-                       and repeat.index <= (normal_mowing_runtime_minutes | int(60)) }}
+                       and repeat.index <= (normal_mowing_monitor_limit_minutes | int(480)) }}
               sequence:
                 - delay: "00:01:00"
           - variables:
@@ -2225,9 +2263,7 @@ actions:
                       entity_id: !input mower_entity
           - wait_template: >-
               {{ is_state(rain_binary_sensor, 'on')
-                 or is_state(mower_entity, 'docked')
-                 or (state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
-                     and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5) }}
+                 or is_state(mower_entity, 'docked') }}
             alias: Poczekaj na powrot do bazy po normalnym koszeniu
             timeout: "00:30:00"
             continue_on_timeout: true
@@ -2240,9 +2276,7 @@ actions:
                     alias: Ustabilizuj potwierdzenie bazy po normalnym koszeniu
                   - wait_template: >-
                       {{ is_state(rain_binary_sensor, 'on')
-                         or is_state(mower_entity, 'docked')
-                         or (state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
-                             and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5) }}
+                         or is_state(mower_entity, 'docked') }}
                     alias: Potwierdz stabilny powrot do bazy po normalnym koszeniu
                     timeout: "00:02:00"
                     continue_on_timeout: true
@@ -2274,13 +2308,7 @@ actions:
                   - condition: template
                     value_template: >-
                       {{ is_state(rain_binary_sensor, 'off')
-                         and (
-                           is_state(mower_entity, 'docked')
-                           or (
-                             state_attr(mower_entity, 'rtk_at_station') in [true, 'true', 'True', 'on']
-                             and (state_attr(mower_entity, 'rtk_station_distance_m') | float(999)) <= 1.5
-                           )
-                         ) }}
+                         and is_state(mower_entity, 'docked') }}
                 sequence:
                   - choose:
                       - conditions:
@@ -2560,9 +2588,10 @@ actions:
                         Start: {{ mowing_cycle_started_at }}
                         Koniec: {{ mowing_cycle_finished_at }}
                         Koszenie: {{ mowing_duration_label | trim }}
-                        Krawędzie: {{ edge_mowing_minutes }} min
-                        Zwykłe koszenie: {{ normal_mowing_minutes }} min
                         Cały cykl z ładowaniem: {{ whole_cycle_duration_label | trim }}
+
+                        Tryb robota:
+                        {{ normal_mowing_mode_label | trim }}.
 
                         Trawa:
                         Skumulowany przyrost: 0 mm.

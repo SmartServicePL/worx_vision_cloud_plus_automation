@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 - 2026-07-19
+
+- Improved Vision / RTK completion detection so temporary low-battery docking, charging and automatic resume remain part of one mowing cycle.
+- Added a stable final-dock confirmation using Worx Cloud state and battery data before resetting accumulated grass growth.
+- Added Worx Cloud rain-delay checks to the edge pass, charging handoff, normal mowing and completion logic.
+- Made automatic planning require a dry and safe forecast horizon instead of validating only the selected starting hour.
+- Added a fresh weather and forecast check at the scheduled start and again after the edge pass, immediately before normal mowing.
+- Improved wet-grass protection for installations without a local weather station by retaining mower rain-sensor drying time and allowing an optional hourly `weather` source.
+- Corrected last-mow and notification timestamps so they use the actual final dock time rather than the later stability-confirmation time.
+- Clarified cycle duration notifications and kept routine 30-minute condition refreshes silent.
 
 ## 0.4.2 - 2026-07-19
 

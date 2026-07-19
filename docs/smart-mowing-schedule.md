@@ -75,11 +75,11 @@ By default the mowing threshold is calculated for robotic mowing, not for tradit
 
 The one-third blade rule is still respected, but only as a safety limit. It means the mower should not remove more than about one third of the grass blade in one pass. It is not used as the normal start threshold for a robot mower. If growth gets much higher than the robotic threshold, the automation treats it as intensive growth and increases mowing urgency. In wired timed mode it also increases the calculated runtime, while still trying to mow in the next dry, safe window.
 
-When those conditions are met, the automation first sends the dedicated edge-only command. If Home Assistant does not see the mower leave the dock, the edge command is sent one more time. After the edge pass, the automation requires a confirmed Worx Cloud `docked` state and waits up to eight hours for the battery to reach at least `80%`. Only then does it send the separate normal one-time mowing command, again with one retry if the mower does not leave the dock. For Vision / RTK mowers the robot decides when the mapped area is finished and the automation monitors it until it returns to the dock. For older wired Worx mowers the automation sends the calculated runtime because their one-time mowing mode needs a mowing time.
+When those conditions are met, the automation first sends the dedicated edge-only command. If Home Assistant does not see the mower leave the dock, the edge command is sent one more time. After the edge pass, the automation requires a confirmed Worx Cloud `docked` state and waits up to eight hours for the battery to reach at least `80%`. It then checks current temperature, humidity, the mower rain sensor, Worx Cloud rain delay and the next hours of forecast once more. Only then does it send the separate normal one-time mowing command, again with one retry if the mower does not leave the dock. For Vision / RTK mowers the robot decides when the mapped area is finished. A low-battery return is treated as part of the same job: the automation keeps monitoring while the mower charges and resumes, and confirms completion only after a stable final dock state. For older wired Worx mowers the automation sends the calculated runtime because their one-time mowing mode needs a mowing time.
 
 The next planned mowing helper is updated after the daily growth calculation.
 
-For the best local decisions, use your own weather station or local outdoor sensors when available. If you do not have a weather station, the Tomorrow.io weather integration is recommended as the hourly forecast source.
+For the best local decisions, use your own weather station or local outdoor sensors for current temperature, rainfall, humidity and sunlight. Select a separate optional `weather` entity for hourly planning; it may come from the same station. Users without a local station can use another weather provider, with Tomorrow.io as the recommended hourly source. Without a forecast entity the automation remains functional and rechecks live conditions every 30 minutes.
 
 In automatic mode the blueprint:
 
@@ -87,18 +87,19 @@ In automatic mode the blueprint:
 - limits very long hourly forecast lists to the planning horizon, which keeps Pirate Weather responses within Home Assistant's template size limit,
 - starts from the selected mowing window preset: morning, before noon, noon, afternoon, evening, night, or custom hours,
 - rejects slots with rain, high rain probability, wet grass risk, unsafe humidity, or temperatures outside the configured mowing range,
+- requires the forecast to remain safe for the next three hours instead of checking only the starting hour,
 - uses `06:00-22:00` as a daytime fallback when the selected daytime window has no safe slot,
 - keeps the night preset inside `22:00-05:00` and blocks it unless **Czy robot ma zamontowane akcesorium FiatLux?** is enabled.
 
 When estimated growth is already high, delaying by another day gets a stronger penalty, so the automation should choose the nearest safe window instead of waiting for perfect conditions. Current rain, unsafe temperature and high rain probability still win over urgency.
 
-The temperature is checked once more after the edge pass and battery recharge, before normal mowing starts. Conditions and forecast planning are refreshed every 30 minutes without adding grass growth again and without sending extra notifications. Conditions are also recalculated when mowing finishes or is postponed.
+Current measurements, Worx Cloud rain delay and the hourly forecast are checked once more after the edge pass and battery recharge, before normal mowing starts. Conditions and forecast planning are refreshed every 30 minutes without adding grass growth again and without sending extra notifications. Conditions are also recalculated when mowing finishes or is postponed.
 
 Notifications are intentionally limited to the daily growth calculation, mowing start, and mowing completion or interruption after a real start. The growth-calculation notification includes accumulated grass growth and the forecast weather, temperature, rain probability, rainfall and humidity for the selected mowing time. If no safe slot is available, that notification reports the next condition evaluation instead of claiming an unsafe mowing start.
 
 In fixed-time mode the helper still follows the configured primary start and backup attempt, but the same weather, temperature and FiatLux protections apply.
 
-If the mower is started manually from the WORX app or another control and stays in mowing state for at least 10 minutes, the blueprint treats it as a completed manual mowing cycle after the mower returns to the dock. It then resets the estimated growth helper, updates the last-mow helper and moves the next planned mowing helper forward. This keeps Home Assistant's grass-growth model in sync even when a user starts the mower outside the automation.
+If the mower is started manually from the WORX app or another control and stays in mowing state for at least 10 minutes, the blueprint monitors that run as well. For Vision / RTK it follows recharge and automatic resume cycles before confirming completion. Only then does it reset the estimated growth helper, update the last-mow helper and move the next planned mowing helper forward. This keeps Home Assistant's grass-growth model in sync even when a user starts the mower outside the automation.
 
 ## Timed Mode For Older Wired Worx
 

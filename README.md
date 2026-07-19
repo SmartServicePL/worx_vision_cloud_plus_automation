@@ -4,7 +4,7 @@
 
 Smart mowing automation for Worx mowers in Home Assistant, focused on Worx Vision / RTK models and still compatible with older wired Worx mowers.
 
-This blueprint replaces a rigid mowing timetable with a weather-aware schedule. It estimates grass growth, chooses a dry and sensible mowing window, starts edge cutting first, then starts normal mowing after the mower returns to the dock and recharges. Vision / RTK mowers are monitored until they finish by themselves; older wired Worx mowers can still use a calculated runtime.
+This blueprint replaces a rigid mowing timetable with a weather-aware schedule. It estimates grass growth, chooses a dry and sensible mowing window, starts edge cutting first, then starts normal mowing after the mower returns to the dock and recharges. Vision / RTK mowers are monitored through automatic recharge and resume cycles until they really finish; older wired Worx mowers can still use a calculated runtime.
 
 This repository is separated from the custom integration repository on purpose:
 
@@ -26,20 +26,22 @@ https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/bl
 ## What It Does
 
 - Estimates grass growth once a day with a Growth Potential (GP) model.
-- Uses weather, rain, temperature, sunlight/UV, optional soil moisture, irrigation and fertilization settings.
-- Selects the best mowing time in the chosen time window, avoiding rain, wet grass and unsafe temperatures.
+- Uses local rain, temperature, sunlight/UV, optional outdoor humidity and soil moisture, irrigation and fertilization settings.
+- Accepts a separate optional `weather` entity for hourly planning.
+- Selects the best mowing time in the chosen time window, avoiding rain, wet grass and unsafe temperatures throughout the next three hours.
 - Runs edge cutting first, waits for the mower to return to the dock and recharge to at least `80%`, then starts normal one-time mowing.
 - Lets the user choose the mower cycle type: Vision / RTK self-finishing mowing or older wired Worx timed mowing.
 - Keeps three helpers updated: estimated grass growth, last full mowing, and next planned mowing.
-- Detects manual mowing started from the WORX app and resets the growth estimate after the mower returns to the dock.
+- Detects manual mowing started from the WORX app and resets the growth estimate only after the full mowing cycle is confirmed.
+- Rechecks live measurements, Worx Cloud rain delay and the hourly forecast before normal mowing begins after the edge pass.
 
 ## Mowing Logic
 
 The automatic start threshold is tuned for robotic mowing. Instead of waiting for tall grass, the blueprint prefers frequent light cuts, usually around `2-4.5 mm` of estimated growth depending on the selected cutting height. The one-third blade rule is kept as a safety limit, not as the normal target.
 
-In automatic mode the blueprint checks hourly forecasts and rejects unsafe slots. By default, mowing is allowed only between `10 C` and `25 C`. If the selected daytime window has no safe slot, the blueprint looks for the nearest safe time between `06:00` and `22:00`. Night mowing from `22:00` to `05:00` is available only when the user confirms that the mower has the FiatLux lighting accessory installed.
+In automatic mode the blueprint checks hourly forecasts and rejects a slot unless the following hours also remain dry and safe. By default, mowing is allowed only between `10 C` and `25 C`. If the selected daytime window has no safe slot, the blueprint looks for the nearest safe time between `06:00` and `22:00`. Night mowing from `22:00` to `05:00` is available only when the user confirms that the mower has the FiatLux lighting accessory installed.
 
-For the best local decisions, use your own weather station or local outdoor sensors when available. If you do not have a weather station, the Tomorrow.io weather integration is recommended as the hourly forecast source.
+For the best local decisions, use your own weather station or local outdoor sensors for measured conditions and, when available, select its `weather` entity as the hourly forecast source. Users without a local station can use another weather provider; Tomorrow.io is recommended. If no hourly forecast is selected, the blueprint still works and rechecks live conditions every 30 minutes.
 
 Long hourly forecasts are capped to the planning horizon, so providers such as Pirate Weather can return many forecast records without making the Home Assistant template exceed its output limit.
 

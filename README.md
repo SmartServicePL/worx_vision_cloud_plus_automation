@@ -39,9 +39,13 @@ https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/bl
 
 The automatic start threshold is tuned for robotic mowing. Instead of waiting for tall grass, the blueprint prefers frequent light cuts, usually around `2-4.5 mm` of estimated growth depending on the selected cutting height. The one-third blade rule is kept as a safety limit, not as the normal target.
 
-In automatic mode the blueprint checks hourly forecasts and rejects a slot unless the following hours also remain dry and safe. By default, mowing is allowed only between `10 C` and `25 C`. If the selected daytime window has no safe slot, the blueprint looks for the nearest safe time between `06:00` and `22:00`. Night mowing from `22:00` to `05:00` is available only when the user confirms that the mower has the FiatLux lighting accessory installed.
+In automatic mode the blueprint checks hourly forecasts and rejects a slot unless temperature and humidity remain safe during the following hours. By default, mowing is allowed only between `10 C` and `25 C`. If it is too hot, the blueprint first looks for the nearest cooler time on the same day. Without FiatLux it searches until `22:00`; with the accessory confirmed it can continue searching through the night until `05:00`.
 
-For the best local decisions, use your own weather station or local outdoor sensors for measured conditions and, when available, select its `weather` entity as the hourly forecast source. Users without a local station can use another weather provider; Tomorrow.io is recommended. If no hourly forecast is selected, the blueprint still works and rechecks live conditions every 30 minutes.
+For the best local decisions, use your own weather station or local outdoor sensors for measured conditions. **MeteoFusion HA** is the recommended hourly forecast source: the blueprint automatically recognizes its `smart_service.weather.v1` context, uses live rain rate and daily rainfall, and prefers forecast slots with higher MeteoFusion confidence. A standard `weather` entity such as Tomorrow.io remains supported. If no hourly forecast is selected, the blueprint still works and rechecks live conditions every 30 minutes.
+
+When a working binary rain sensor is selected, its live state is authoritative. A rain forecast is still shown in notifications, but it neither postpones nor blocks the planned start while that sensor remains dry. If the sensor changes to rain during edge or normal mowing, the robot is sent back to the dock. When the selected rain sensor is unavailable, MeteoFusion or the standard weather entity remains the protective fallback.
+
+The post-rain drying delay is applied only after measurable rainfall. A Home Assistant restart or a temporary `unavailable` state followed by `off` is not treated as a rain event when the measured rainfall is zero.
 
 Long hourly forecasts are capped to the planning horizon, so providers such as Pirate Weather can return many forecast records without making the Home Assistant template exceed its output limit.
 

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.6.0 - 2026-07-26
+
+- Added first-class MeteoFusion HA support through the `smart_service.weather.v1` context, including locally corrected current temperature, live rain rate, daily rainfall and forecast confidence.
+- Kept standard Home Assistant `weather` providers fully supported, including Tomorrow.io, and retained live-condition checks when no hourly forecast is configured.
+- Made a working binary rain sensor authoritative over forecast rain: a dry sensor allows the mower to start at the planned time even when rain is forecast.
+- Changed forecast rain to informational data when the real rain sensor is available, so it no longer postpones, blocks or indirectly changes the selected start time.
+- Added automatic return-to-dock handling when the real rain sensor detects rain during edge cutting, charging handoff or normal mowing.
+- Added a safe fallback to MeteoFusion live rain or the standard weather state whenever the selected binary rain sensor becomes unavailable.
+- Fixed false post-rain drying delays after a Home Assistant restart, blueprint reload or temporary sensor outage; drying time now starts only after measurable rainfall.
+- Reworked automatic slot selection to prefer the configured mowing window while still choosing the nearest suitable time outside it on the same day when necessary.
+- Improved high-temperature handling: when the current or planned temperature is outside the default `10-25 C` range, the automation searches for the nearest cooler same-day slot instead of immediately postponing to tomorrow.
+- Extended the temperature retry search until `22:00` without FiatLux and through the night until `05:00` when the FiatLux accessory is confirmed.
+- Rechecked current temperature, humidity, actual rain and a fresh hourly forecast after the edge pass before normal mowing starts.
+- Improved multi-hour forecast validation using accumulated rainfall, maximum rain probability, humidity, temperature and MeteoFusion confidence across the expected mowing horizon.
+- Added an external `worx_smart_mowing_recalculate` event trigger so compatible services can request an immediate condition refresh without adding grass growth again.
+- Improved planning, retry and completion messages with the accumulated grass growth, concrete next mowing time, forecast conditions and a clear reason for the selected or postponed time.
+- Updated the blueprint description, README and setup guide to explain MeteoFusion HA, real-sensor priority, same-day temperature retries and FiatLux night operation.
+
 ## 0.5.0 - 2026-07-19
 
 - Improved Vision / RTK completion detection so temporary low-battery docking, charging and automatic resume remain part of one mowing cycle.

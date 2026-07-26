@@ -79,19 +79,24 @@ When those conditions are met, the automation first sends the dedicated edge-onl
 
 The next planned mowing helper is updated after the daily growth calculation.
 
-For the best local decisions, use your own weather station or local outdoor sensors for current temperature, rainfall, humidity and sunlight. Select a separate optional `weather` entity for hourly planning; it may come from the same station. Users without a local station can use another weather provider, with Tomorrow.io as the recommended hourly source. Without a forecast entity the automation remains functional and rechecks live conditions every 30 minutes.
+For the best local decisions, use your own weather station or local outdoor sensors for current temperature, accumulated rainfall, humidity and sunlight. Select **MeteoFusion HA** as the optional hourly `weather` entity when it is installed. The blueprint automatically consumes its `smart_service.weather.v1` context, including live rain rate, daily rainfall and forecast confidence. Standard Home Assistant weather providers, including Tomorrow.io, remain supported. Without a forecast entity the automation remains functional and rechecks live conditions every 30 minutes.
+
+The drying delay starts only when rainfall was actually measured. A restart, integration reload or temporary `unavailable` state followed by `off` does not create a false rain event when accumulated rainfall is zero.
 
 In automatic mode the blueprint:
 
 - checks 15-minute forecast slots over the next few days,
 - limits very long hourly forecast lists to the planning horizon, which keeps Pirate Weather responses within Home Assistant's template size limit,
 - starts from the selected mowing window preset: morning, before noon, noon, afternoon, evening, night, or custom hours,
-- rejects slots with rain, high rain probability, wet grass risk, unsafe humidity, or temperatures outside the configured mowing range,
+- rejects slots with wet-grass risk, unsafe humidity, or temperatures outside the configured mowing range,
 - requires the forecast to remain safe for the next three hours instead of checking only the starting hour,
 - uses `06:00-22:00` as a daytime fallback when the selected daytime window has no safe slot,
-- keeps the night preset inside `22:00-05:00` and blocks it unless **Czy robot ma zamontowane akcesorium FiatLux?** is enabled.
+- first searches for a suitable cooler hour on the same day when the current or planned temperature is outside the allowed range,
+- extends the same-day search through the night until `05:00` when **Czy robot ma zamontowane akcesorium FiatLux?** is enabled.
 
-When estimated growth is already high, delaying by another day gets a stronger penalty, so the automation should choose the nearest safe window instead of waiting for perfect conditions. Current rain, unsafe temperature and high rain probability still win over urgency.
+When estimated growth is already high, delaying by another day gets a stronger penalty, so the automation should choose the nearest safe window instead of waiting for perfect conditions. Current rain and unsafe temperature still win over urgency.
+
+If a working binary rain sensor is selected, its live state has priority over the forecast. Forecast rain remains visible in the notification, but it does not move or block the scheduled start while the sensor reports dry. If the sensor detects rain during edge cutting or normal mowing, the automation sends the mower back to the dock. When that sensor is unavailable, MeteoFusion live rain or the standard weather state is used as the fallback.
 
 Current measurements, Worx Cloud rain delay and the hourly forecast are checked once more after the edge pass and battery recharge, before normal mowing starts. Conditions and forecast planning are refreshed every 30 minutes without adding grass growth again and without sending extra notifications. Conditions are also recalculated when mowing finishes or is postponed.
 

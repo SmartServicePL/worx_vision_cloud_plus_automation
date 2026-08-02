@@ -17,11 +17,13 @@ blueprint:
     - zalecana integracja MeteoFusion HA dostarcza lokalnie korygowaną prognozę
       godzinową, bieżący opad i ocenę jakości prognozy,
     - można również użyć innej encji weather, np. Tomorrow.io,
-    - gdy rzeczywisty czujnik opadu jest dostępny, ma pierwszeństwo nad prognozą:
-      prognozowany deszcz jest informacją, ale nie przesuwa ani nie blokuje startu
-      przy suchym czujniku; robot wraca dopiero po wykryciu rzeczywistego opadu,
-    - bez prognozy automatyzacja nadal działa i ponownie sprawdza aktualne warunki
-      co 30 minut.
+    - prognoza jest używana raz podczas planowania do wybrania konkretnej godziny
+      bez opadu i z bezpieczną temperaturą,
+    - zapisana godzina nie jest później przesuwana przez okresowe zmiany prognozy,
+    - w chwili startu pierwszeństwo mają rzeczywiste czujniki: przy suchej pogodzie
+      robot rusza, a po wykryciu faktycznego deszczu wraca do bazy,
+    - bez prognozy automatyzacja używa wybranego okna i sprawdza rzeczywiste
+      warunki bezpośrednio przed startem.
 
     Jak wygląda cykl koszenia:
     1. Home Assistant uruchamia osobne przycinanie krawędzi.
@@ -109,7 +111,7 @@ blueprint:
                 - domain: weather
         forecast_weather_entity:
           name: Prognoza godzinowa opcjonalnie
-          description: Zalecana jest encja weather z integracji MeteoFusion HA. Automatyzacja wykorzysta jej lokalnie korygowaną prognozę, bieżący opad i ocenę jakości. Obsługiwane są również zwykłe encje weather, np. Tomorrow.io. Bez prognozy warunki są sprawdzane co 30 minut.
+          description: Zalecana jest encja weather z integracji MeteoFusion HA. Automatyzacja raz wybierze z jej prognozy konkretną suchą godzinę z bezpieczną temperaturą i zapisze ją do czasu startu. Obsługiwane są również zwykłe encje weather, np. Tomorrow.io. Bez prognozy używane jest wybrane okno, a bieżące warunki są sprawdzane w chwili startu.
           default: ""
           selector:
             entity:
@@ -530,13 +532,6 @@ triggers:
   - trigger: time_pattern
     id: start_due_check
     minutes: "/5"
-  - trigger: time_pattern
-    id: refresh_conditions
-    minutes: "/30"
-    seconds: 15
-  - trigger: event
-    id: refresh_conditions
-    event_type: worx_smart_mowing_recalculate
   - trigger: state
     id: external_mowing_started
     entity_id: !input mower_entity
@@ -626,8 +621,8 @@ variables:
   forecast_dry_horizon_hours: 3
   forecast_min_future_hours: 2
   wet_grass_humidity_percent: 88
-  forecast_rain_block_mm: 0.2
-  high_rain_probability_percent: 75
+  forecast_rain_block_mm: 0.05
+  high_rain_probability_percent: 60
   notification_id: >-
     {{ 'worx_smart_mowing_' ~ mower_entity | replace('.', '_') }}
   forecast_weather_entity: >-
@@ -749,8 +744,9 @@ variables:
     {{ [configured, smart] | max | round(2) }}
   local_rain_sensor_available: >-
     {{ states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', ''] }}
+  # Prognoza wybiera suchą godzinę. W chwili wykonania decyzję podejmują bieżące czujniki.
   forecast_rain_is_advisory: >-
-    {{ (local_rain_sensor_available | string | lower) == 'true' }}
+    false
   rain_observation_available: >-
     {{ (local_rain_sensor_available | string | lower) == 'true'
        or (smart_weather_rain_rate_available | string | lower) == 'true' }}
@@ -1238,7 +1234,7 @@ actions:
 
       - conditions:
           - condition: template
-            value_template: "{{ trigger.id in ['update_growth', 'refresh_conditions'] }}"
+            value_template: "{{ trigger.id == 'update_growth' }}"
         sequence:
           - choose:
               - conditions:
@@ -1253,41 +1249,8 @@ actions:
                       type: hourly
                     response_variable: weather_forecast
           - variables:
-              previous_next_mow_datetime: >-
-                {% if (next_mow_helper | default('', true) | length) > 0
-                      and states(next_mow_helper) not in ['unknown', 'unavailable', 'none', ''] %}
-                  {{ states(next_mow_helper) }}
-                {% else %}
-                  unknown
-                {% endif %}
-          - variables:
-              preserved_next_mow_datetime: >-
-                {%- set previous = previous_next_mow_datetime | trim -%}
-                {%- set fallback = stable_next_mow_datetime | trim -%}
-                {%- if previous in ['unknown', 'unavailable', 'none', ''] -%}
-                  {{ fallback }}
-                {%- else -%}
-                  {%- set previous_ts = as_timestamp(previous) -%}
-                  {%- set fallback_ts = as_timestamp(fallback) -%}
-                  {%- set now_ts = as_timestamp(now()) -%}
-                  {%- set target_date = previous_ts | timestamp_custom('%Y-%m-%d', true) -%}
-                  {%- set window_start = as_timestamp(target_date ~ ' ' ~ primary_start_time_value) -%}
-                  {%- set raw_window_end = as_timestamp(target_date ~ ' ' ~ backup_start_time_value) -%}
-                  {%- set window_end = raw_window_end if raw_window_end > window_start else raw_window_end + 86400 -%}
-                  {%- if backup_start_time_value <= primary_start_time_value and previous_ts < raw_window_end -%}
-                    {%- set window_start = window_start - 86400 -%}
-                    {%- set window_end = raw_window_end -%}
-                  {%- endif -%}
-                  {%- set inside_window = previous_ts >= window_start and previous_ts <= window_end -%}
-                  {%- if previous_ts > now_ts + 60 and inside_window and previous_ts <= fallback_ts -%}
-                    {{ previous_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
-                  {%- else -%}
-                    {{ fallback }}
-                  {%- endif -%}
-                {%- endif -%}
-          - variables:
               planned_next_mow_datetime: >-
-                {%- set fallback = preserved_next_mow_datetime | trim -%}
+                {%- set fallback = stable_next_mow_datetime | trim -%}
                 {%- set step = auto_planning_step_seconds | int(900) -%}
                 {%- set earliest_allowed_ts = [as_timestamp(fallback), as_timestamp(now()) + 300, rain_drying_ready_ts | float(0)] | max -%}
                 {%- set fallback_check_ts = ((earliest_allowed_ts / step) | round(0, 'ceil') | int) * step -%}
@@ -1755,57 +1718,24 @@ actions:
                         {{ (planned_next_mow_forecast | trim).split(';', 1)[1] }}.
 
                         Powód wyboru: {{ planned_next_mow_reason | trim }}.
+
+                        Termin został zapisany i nie będzie zmieniany w tle przed startem.
+                        W podanej godzinie automatyzacja sprawdzi rzeczywisty deszcz i temperaturę.
                         {% else %}
-                        Planowane koszenie:
+                        Wyznaczony termin kontroli:
                         {{ planned_next_mow_label | trim }}.
 
                         Status terminu:
-                        Warunkowy - prognoza nie potwierdza jeszcze całego bezpiecznego cyklu.
+                        Prognoza nie potwierdza całego bezpiecznego cyklu.
 
                         Prognoza dla tej godziny:
                         {{ (planned_next_mow_forecast | trim).split(';', 1)[1] }}.
 
                         Powód wyboru: {{ planned_next_mow_reason | trim }}.
 
-                        Warunki są przeliczane co 30 minut i ponownie bezpośrednio przed startem. Jeśli się pogorszą, automatyzacja poda powód oraz nową konkretną godzinę.
+                        Termin nie będzie przesuwany w tle. W tej godzinie automatyzacja
+                        sprawdzi rzeczywiste warunki i w razie blokady poda nową konkretną godzinę.
                         {% endif %}
-          - choose:
-              - conditions:
-                  - condition: template
-                    value_template: >-
-                      {% set previous = previous_next_mow_datetime | trim %}
-                      {% set today_date = now().strftime('%Y-%m-%d') %}
-                      {% set previous_date = as_timestamp(previous) | timestamp_custom('%Y-%m-%d', true) if previous not in ['unknown', 'unavailable', 'none', ''] else '' %}
-                      {% set planned_date = as_timestamp(planned_next_mow_datetime | trim) | timestamp_custom('%Y-%m-%d', true) %}
-                      {% set last_raw = states(last_mow_helper) %}
-                      {% set last_date = as_timestamp(last_raw) | timestamp_custom('%Y-%m-%d', true) if last_raw not in ['unknown', 'unavailable', 'none', ''] else '' %}
-                      {{ trigger.id == 'refresh_conditions'
-                         and previous_date == today_date
-                         and planned_date > today_date
-                         and last_date != today_date }}
-                sequence:
-                  - action: persistent_notification.create
-                    data:
-                      notification_id: "{{ notification_id }}"
-                      title: "Worx: dziś bez koszenia"
-                      message: |
-                        Dzisiejsza decyzja:
-                        Kosiarka nie będzie dziś kosiła.
-
-                        Powód:
-                        {{ planned_next_mow_reason | trim }}.
-
-                        Skumulowany przyrost:
-                        {{ estimated_growth_mm }} mm (próg {{ growth_threshold_mm }} mm).
-
-                        Następne planowane koszenie:
-                        {{ planned_next_mow_label | trim }}.
-
-                        Prognoza dla tego terminu:
-                        {{ (planned_next_mow_forecast | trim).split(';', 1)[1] }}.
-
-                        Warunki pozostają sprawdzane co 30 minut i plan może zostać przyspieszony, jeśli pogoda się poprawi.
-
       - conditions:
           - condition: template
             value_template: "{{ trigger.id in ['start_scheduled', 'start_due_check'] and scheduled_start_due | trim == 'on' }}"
@@ -1823,64 +1753,8 @@ actions:
                       type: hourly
                     response_variable: weather_forecast_at_start
           - variables:
-              forecast_start_block_reason: >-
-                {% if weather_forecast_at_start is not defined or weather_forecast_at_start is not mapping %}
-                  {{ '' }}
-                {% else %}
-                  {% set items = weather_forecast_at_start.get(forecast_weather_entity | trim, {}).get('forecast', []) %}
-                  {% set limited_items = items[:(weather_forecast_max_items | int(120))] %}
-                  {% set now_ts = as_timestamp(now()) %}
-                  {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
-                  {% set ns = namespace(seen=0, reason='', reason_ts=0, rain=0, probability=0) %}
-                  {% for item in limited_items %}
-                    {% set item_ts = as_timestamp(item.datetime) %}
-                    {% if item_ts > (now_ts - 3600) and item_ts <= (now_ts + ((forecast_dry_horizon_hours | int(3)) * 3600)) %}
-                      {% set ns.seen = ns.seen + 1 %}
-                      {% set item_rain = item.precipitation | default(0) | float(0) %}
-                      {% set item_probability = item.precipitation_probability | default(0) | float(0) %}
-                      {% set item_temp = item.temperature | default(temp_c) | float(temp_c) %}
-                      {% set item_humidity = item.humidity | default(60) | float(60) %}
-                      {% set item_condition = item.condition | default('') %}
-                      {% set ns.rain = ns.rain + item_rain %}
-                      {% if item_probability > ns.probability %}
-                        {% set ns.probability = item_probability %}
-                      {% endif %}
-                      {% if ns.reason | length == 0
-                            and (forecast_rain_is_advisory | string | lower) != 'true'
-                            and item_condition in bad %}
-                        {% set ns.reason = 'prognoza przewiduje deszczową pogodę w trakcie najbliższych ' ~ forecast_dry_horizon_hours ~ ' godz.' %}
-                        {% set ns.reason_ts = item_ts %}
-                      {% elif ns.reason | length == 0 and (item_temp < (min_mowing_temperature_c | float(10)) or item_temp > (max_mowing_temperature_c | float(25))) %}
-                        {% set ns.reason = 'prognozowana temperatura w trakcie cyklu wynosi ' ~ (item_temp | round(1)) ~ ' st. C' %}
-                        {% set ns.reason_ts = item_ts %}
-                      {% elif ns.reason | length == 0 and item_humidity > (wet_grass_humidity_percent | float(88)) %}
-                        {% set ns.reason = 'prognozowana wilgotność w trakcie cyklu wynosi ' ~ (item_humidity | round(0)) ~ '%' %}
-                        {% set ns.reason_ts = item_ts %}
-                      {% endif %}
-                    {% endif %}
-                  {% endfor %}
-                  {% if ns.reason | length > 0 %}
-                    {{ ns.reason }} około {{ ns.reason_ts | timestamp_custom('%H:%M', true) }}
-                  {% elif (forecast_rain_is_advisory | string | lower) != 'true'
-                        and ns.rain > (forecast_rain_block_mm | float(0.2)) %}
-                    prognozowana suma opadu w trakcie najbliższych {{ forecast_dry_horizon_hours }} godz. wynosi {{ ns.rain | round(2) }} mm
-                  {% elif (forecast_rain_is_advisory | string | lower) != 'true'
-                        and ns.probability > (high_rain_probability_percent | float(75)) %}
-                    najwyższe ryzyko deszczu w trakcie najbliższych {{ forecast_dry_horizon_hours }} godz. wynosi {{ ns.probability | round(0) }}%
-                  {% elif (forecast_rain_is_advisory | string | lower) != 'true'
-                        and ns.seen < (forecast_min_future_hours | int(2)) %}
-                    prognoza godzinowa nie potwierdza co najmniej {{ forecast_min_future_hours }} kolejnych godzin bezpiecznej pogody
-                  {% else %}
-                    {{ '' }}
-                  {% endif %}
-                {% endif %}
-          - variables:
               effective_start_block_reason: >-
-                {% if (start_block_reason | trim | length) > 0 %}
-                  {{ start_block_reason | trim }}
-                {% else %}
-                  {{ forecast_start_block_reason | trim }}
-                {% endif %}
+                {{ start_block_reason | trim }}
           - variables:
               planned_retry_mow_datetime: >-
                 {%- set fallback = next_mow_datetime | trim -%}
@@ -2313,12 +2187,13 @@ actions:
                 To szybka ponowna próba po przerwaniu technicznym.
                 Aktualne warunki są spełnione, więc automatyzacja nie czeka do końca okna koszenia.
                 {% else %}
-                Następne sprawdzenie warunków:
+                Nowy zapisany termin:
                 {{ planned_retry_mow_label | trim }}.
 
                 Uwagi:
-                Nie znaleziono jeszcze bezpiecznej godziny koszenia.
-                Warunki będą sprawdzane co 30 minut.
+                Prognoza nie potwierdza jeszcze całego bezpiecznego cyklu.
+                Termin nie będzie zmieniany w tle; rzeczywiste warunki zostaną
+                ponownie sprawdzone dokładnie w podanej godzinie.
                 {% endif %}
           - choose:
               - conditions:
@@ -2799,53 +2674,6 @@ actions:
                       type: hourly
                     response_variable: weather_forecast_after_edges
           - variables:
-              forecast_after_edges_block_reason: >-
-                {% if weather_forecast_after_edges is not defined or weather_forecast_after_edges is not mapping %}
-                  {{ '' }}
-                {% else %}
-                  {% set items = weather_forecast_after_edges.get(forecast_weather_entity | trim, {}).get('forecast', []) %}
-                  {% set limited_items = items[:(weather_forecast_max_items | int(120))] %}
-                  {% set now_ts = as_timestamp(now()) %}
-                  {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
-                  {% set ns = namespace(seen=0, reason='', reason_ts=0) %}
-                  {% for item in limited_items %}
-                    {% set item_ts = as_timestamp(item.datetime) %}
-                    {% if item_ts > (now_ts - 3600) and item_ts <= (now_ts + ((forecast_dry_horizon_hours | int(3)) * 3600)) %}
-                      {% set ns.seen = ns.seen + 1 %}
-                      {% set item_rain = item.precipitation | default(0) | float(0) %}
-                      {% set item_probability = item.precipitation_probability | default(0) | float(0) %}
-                      {% set item_temp = item.temperature | default(temp_c) | float(temp_c) %}
-                      {% set item_humidity = item.humidity | default(60) | float(60) %}
-                      {% set item_condition = item.condition | default('') %}
-                      {% if ns.reason | length == 0
-                          and (forecast_rain_is_advisory | string | lower) != 'true'
-                          and (item_rain > (forecast_rain_block_mm | float(0.2)) or item_condition in bad) %}
-                        {% set ns.reason = 'prognoza przewiduje opad podczas normalnego koszenia' %}
-                        {% set ns.reason_ts = item_ts %}
-                      {% elif ns.reason | length == 0
-                            and (forecast_rain_is_advisory | string | lower) != 'true'
-                            and item_probability > (high_rain_probability_percent | float(75)) %}
-                        {% set ns.reason = 'ryzyko deszczu podczas normalnego koszenia wynosi ' ~ (item_probability | round(0)) ~ '%' %}
-                        {% set ns.reason_ts = item_ts %}
-                      {% elif ns.reason | length == 0 and (item_temp < (min_mowing_temperature_c | float(10)) or item_temp > (max_mowing_temperature_c | float(25))) %}
-                        {% set ns.reason = 'prognozowana temperatura podczas normalnego koszenia wynosi ' ~ (item_temp | round(1)) ~ ' st. C' %}
-                        {% set ns.reason_ts = item_ts %}
-                      {% elif ns.reason | length == 0 and item_humidity > (wet_grass_humidity_percent | float(88)) %}
-                        {% set ns.reason = 'prognozowana wilgotność podczas normalnego koszenia wynosi ' ~ (item_humidity | round(0)) ~ '%' %}
-                        {% set ns.reason_ts = item_ts %}
-                      {% endif %}
-                    {% endif %}
-                  {% endfor %}
-                  {% if ns.reason | length > 0 %}
-                    {{ ns.reason }} około {{ ns.reason_ts | timestamp_custom('%H:%M', true) }}
-                  {% elif (forecast_rain_is_advisory | string | lower) != 'true'
-                        and ns.seen < (forecast_min_future_hours | int(2)) %}
-                    prognoza nie potwierdza co najmniej {{ forecast_min_future_hours }} kolejnych godzin bezpiecznej pogody dla normalnego koszenia
-                  {% else %}
-                    {{ '' }}
-                  {% endif %}
-                {% endif %}
-          - variables:
               post_edge_conditions_block_reason: >-
                 {% set selected_humidity = outdoor_humidity_sensor | default('', true) %}
                 {% set sensor_humidity_available = selected_humidity | length > 0 and states(selected_humidity) not in ['unknown', 'unavailable', 'none', ''] %}
@@ -2874,8 +2702,6 @@ actions:
                   lokalny pomiar lub MeteoFusion HA wskazuje trwający opad
                 {% elif humidity_available and humidity_now > (wet_grass_humidity_percent | float(88)) %}
                   wilgotność powietrza wynosi {{ humidity_now | round(0) }}%, więc trawa może być mokra
-                {% elif (forecast_after_edges_block_reason | trim | length) > 0 %}
-                  {{ forecast_after_edges_block_reason | trim }}
                 {% else %}
                   {{ '' }}
                 {% endif %}
@@ -2901,12 +2727,13 @@ actions:
                 Prognoza podczas koszenia:
                 {{ (planned_retry_mow_forecast | trim).split(';', 1)[1] }}.
                 {% else %}
-                Następne sprawdzenie warunków:
+                Nowy zapisany termin:
                 {{ temperature_retry_label | trim }}.
 
                 Uwagi:
-                Nie znaleziono jeszcze bezpiecznej godziny koszenia.
-                Warunki będą sprawdzane co 30 minut.
+                Prognoza nie potwierdza jeszcze całego bezpiecznego cyklu.
+                Termin nie będzie zmieniany w tle; rzeczywiste warunki zostaną
+                ponownie sprawdzone dokładnie w podanej godzinie.
                 {% endif %}
           - choose:
               - conditions:
@@ -3669,11 +3496,12 @@ actions:
                         Prognoza podczas koszenia:
                         {{ (planned_next_after_reset_forecast | trim).split(';', 1)[1] }}.
                         {% else %}
-                        Następne sprawdzenie warunków:
+                        Następny zapisany termin:
                         {{ planned_next_after_reset_label | trim }}.
 
                         Uwagi:
-                        Warunki będą sprawdzane co 30 minut.
+                        Prognoza nie potwierdza jeszcze całego bezpiecznego cyklu.
+                        Termin pozostanie zapisany do następnego dziennego przeliczenia.
                         {% endif %}
             default:
               - action: input_number.set_value

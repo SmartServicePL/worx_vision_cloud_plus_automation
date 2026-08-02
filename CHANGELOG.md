@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1 - 2026-08-02
+
+- Locked the concrete mowing time selected during the daily grass-growth calculation so periodic forecast changes no longer move an already announced start.
+- Removed the 30-minute condition refresh and external recalculation event from schedule planning; the five-minute trigger now remains only as missed-start recovery and does not rewrite the helper.
+- Made the planning forecast a strict filter for precipitation, unsafe temperature, excessive humidity and the post-rain drying horizon while still preferring the selected mowing window.
+- Kept live sensors authoritative at execution time: a changed forecast alone does not cancel the locked start when the real rain sensor is dry and the current temperature is safe.
+- When actual rain, wet-grass conditions or unsafe temperature block the scheduled start, the automation calculates and announces a new concrete retry time with the reason and expected conditions.
+- Updated the README and setup guide to describe deterministic planning and the distinction between forecast-based scheduling and live start validation.
+
 ## 0.6.0 - 2026-07-26
 
 - Added first-class MeteoFusion HA support through the `smart_service.weather.v1` context, including locally corrected current temperature, live rain rate, daily rainfall and forecast confidence.

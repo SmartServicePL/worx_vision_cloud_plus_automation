@@ -45,7 +45,7 @@ For the best local decisions, use your own weather station or local outdoor sens
 
 Forecast rain is used while choosing the original mowing time, so the saved plan prefers a genuinely dry forecast window. At the saved start time a working binary rain sensor becomes authoritative: a dry sensor allows the cycle to begin even if the forecast changed after planning. If the sensor changes to rain during edge or normal mowing, the robot is sent back to the dock. When the selected rain sensor is unavailable, MeteoFusion or the standard weather entity remains the protective fallback.
 
-The post-rain drying delay is applied only after measurable rainfall. A Home Assistant restart or a temporary `unavailable` state followed by `off` is not treated as a rain event when the measured rainfall is zero.
+The post-rain drying delay starts only after a real `on` to `off` transition of the selected rain sensor. A Home Assistant restart or a temporary `unavailable` state followed by `off` cannot restart the drying timer. Trace precipitation below `0.2 mm` is ignored, preventing sensor noise from repeatedly postponing mowing.
 
 Long hourly forecasts are capped to the planning horizon, so providers such as Pirate Weather can return many forecast records without making the Home Assistant template exceed its output limit.
 

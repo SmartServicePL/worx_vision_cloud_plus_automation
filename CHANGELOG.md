@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.2 - 2026-08-13
+
+- Fixed repeated false rain postponements caused by a rain sensor recovering from `unavailable` or by a Home Assistant restart changing the entity's `last_changed` timestamp.
+- The post-rain drying timer now starts only after a real `on` to `off` transition of the configured binary rain sensor.
+- Ignored measured precipitation traces below `0.2 mm` for the drying timer so station noise such as a single `0.1 mm` reading cannot repeatedly delay mowing.
+- Restored a practical `0.2 mm` forecast precipitation threshold so trace forecast values are not treated like meaningful rain.
+- Updated the blueprint description, README and setup guide with the corrected rain and drying behavior.
+
 ## 0.6.1 - 2026-08-02
 
 - Locked the concrete mowing time selected during the daily grass-growth calculation so periodic forecast changes no longer move an already announced start.

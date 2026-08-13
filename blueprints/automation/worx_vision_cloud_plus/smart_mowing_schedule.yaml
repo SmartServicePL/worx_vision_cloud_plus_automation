@@ -22,6 +22,8 @@ blueprint:
     - zapisana godzina nie jest później przesuwana przez okresowe zmiany prognozy,
     - w chwili startu pierwszeństwo mają rzeczywiste czujniki: przy suchej pogodzie
       robot rusza, a po wykryciu faktycznego deszczu wraca do bazy,
+    - czas schnięcia rozpoczyna się tylko po rzeczywistym przejściu czujnika opadu
+      z `on` na `off`; restart HA lub chwilowa niedostępność czujnika nie udają deszczu,
     - bez prognozy automatyzacja używa wybranego okna i sprawdza rzeczywiste
       warunki bezpośrednio przed startem.
 
@@ -84,7 +86,7 @@ blueprint:
                 - domain: sensor
         rain_binary_sensor:
           name: Bieżący stan opadu
-          description: Binary sensor informujący, czy aktualnie pada. Może pochodzić z kosiarki albo lokalnej stacji pogodowej. Gdy jest dostępny, jego rzeczywisty pomiar ma pierwszeństwo nad prognozą deszczu.
+          description: Binary sensor informujący, czy aktualnie pada. Może pochodzić z kosiarki albo lokalnej stacji pogodowej. Gdy jest dostępny, jego rzeczywisty pomiar ma pierwszeństwo nad prognozą deszczu. Czas schnięcia jest liczony tylko po prawdziwym przejściu z opadu do stanu suchego, a nie po restarcie lub chwilowej niedostępności encji.
           selector:
             entity:
               filter:
@@ -533,6 +535,11 @@ triggers:
     id: start_due_check
     minutes: "/5"
   - trigger: state
+    id: rain_stopped
+    entity_id: !input rain_binary_sensor
+    from: "on"
+    to: "off"
+  - trigger: state
     id: external_mowing_started
     entity_id: !input mower_entity
     to: mowing
@@ -621,7 +628,8 @@ variables:
   forecast_dry_horizon_hours: 3
   forecast_min_future_hours: 2
   wet_grass_humidity_percent: 88
-  forecast_rain_block_mm: 0.05
+  forecast_rain_block_mm: 0.2
+  significant_measured_rain_mm: 0.2
   high_rain_probability_percent: 60
   notification_id: >-
     {{ 'worx_smart_mowing_' ~ mower_entity | replace('.', '_') }}
@@ -765,18 +773,11 @@ variables:
     {{ base * (2 if (rain_mm | float(0)) > (max_rain_24h_mm | float(3)) else 1) }}
   rain_drying_ready_ts: >-
     {% set drying_seconds = (rain_drying_hours | float(3)) * 3600 %}
-    {% set measured_rain = (rain_mm | float(0)) > 0.05 %}
     {% if (rain_active_now | string | lower) == 'true' %}
       {{ as_timestamp(now()) + drying_seconds }}
-    {% elif measured_rain and is_state(rain_binary_sensor, 'off') %}
-      {{ as_timestamp(states[rain_binary_sensor].last_changed) + drying_seconds }}
     {% else %}
       0
     {% endif %}
-  rain_drying_required: >-
-    {{ (rain_drying_ready_ts | float(0)) > as_timestamp(now())
-       and (rain_mm | float(0)) > 0.05
-       and (rain_active_now | string | lower) != 'true' }}
   rain_drying_ready_label: >-
     {% set ts = rain_drying_ready_ts | float(0) %}
     {% if ts <= 0 %}
@@ -1103,8 +1104,6 @@ variables:
       chmura Worx zgłasza aktywne opóźnienie po deszczu
     {% elif (rain_active_now | string | lower) == 'true' %}
       lokalny pomiar lub MeteoFusion HA wskazuje trwający opad
-    {% elif (rain_drying_required | string | lower) == 'true' %}
-      trawa jeszcze schnie po deszczu; wymagane jest około {{ rain_drying_hours | float(3) | round(0, 'ceil') | int }} godz. od ustania opadu{% if (rain_mm | float(0)) > (max_rain_24h_mm | float(3)) %}, ponieważ opad {{ rain_mm }} mm przekroczył próg intensywnego deszczu {{ max_rain_24h_mm }} mm{% endif %}. Najwcześniejszy start po wyschnięciu: {{ rain_drying_ready_label | trim }}
     {% elif (outdoor_humidity_available | string | lower) == 'true'
           and (outdoor_humidity_percent | float(60)) > (wet_grass_humidity_percent | float(88)) %}
       wilgotność powietrza wynosi {{ outdoor_humidity_percent | round(0) }}%, więc trawa może być mokra od rosy lub mgły
@@ -1120,6 +1119,33 @@ variables:
 
 actions:
   - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'rain_stopped' }}"
+        sequence:
+          - variables:
+              rain_stop_ready_datetime: >-
+                {% set step = auto_planning_step_seconds | int(900) %}
+                {% set ready_ts = as_timestamp(now()) + ((rain_drying_hours | float(3)) * 3600) %}
+                {% set rounded_ts = ((ready_ts / step) | round(0, 'ceil') | int) * step %}
+                {{ rounded_ts | timestamp_custom('%Y-%m-%d %H:%M:%S', true) }}
+              rain_stop_should_delay: >-
+                {% set next_raw = states(next_mow_helper) %}
+                {% set significant_rain = (rain_mm | float(0)) >= (significant_measured_rain_mm | float(0.2)) %}
+                {% set ready_ts = as_timestamp(rain_stop_ready_datetime | trim) %}
+                {% set next_ts = as_timestamp(next_raw) if next_raw not in ['unknown', 'unavailable', 'none', ''] else 0 %}
+                {{ significant_rain and (next_ts <= 0 or next_ts < ready_ts) }}
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ (rain_stop_should_delay | string | lower) == 'true' }}"
+                sequence:
+                  - action: input_datetime.set_datetime
+                    alias: Zachowaj czas schnięcia po rzeczywistym deszczu
+                    target:
+                      entity_id: !input next_mow_helper
+                    data:
+                      datetime: "{{ rain_stop_ready_datetime | trim }}"
       - conditions:
           - condition: template
             value_template: "{{ trigger.id == 'external_mowing_started' }}"

@@ -81,7 +81,7 @@ The next planned mowing helper is updated after the daily growth calculation.
 
 For the best local decisions, use your own weather station or local outdoor sensors for current temperature, accumulated rainfall, humidity and sunlight. Select **MeteoFusion HA** as the optional hourly `weather` entity when it is installed. The blueprint automatically consumes its `smart_service.weather.v1` context, including live rain rate, daily rainfall and forecast confidence. Standard Home Assistant weather providers, including Tomorrow.io, remain supported. Without a forecast entity the automation uses the configured mowing window and validates live conditions when the saved start time arrives.
 
-The drying delay starts only when rainfall was actually measured. A restart, integration reload or temporary `unavailable` state followed by `off` does not create a false rain event when accumulated rainfall is zero.
+The drying delay starts only after a real `on` to `off` transition of the selected rain sensor. A restart, integration reload or temporary `unavailable` state followed by `off` cannot restart it. Trace precipitation below `0.2 mm` is ignored, so sensor noise does not repeatedly postpone mowing.
 
 In automatic mode the blueprint:
 

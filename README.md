@@ -25,7 +25,7 @@ https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/bl
 
 ## What It Does
 
-- Estimates grass growth once a day with a Growth Potential (GP) model.
+- Estimates grass growth once a day with a Growth Potential (GP) model that uses the conditions of the whole coming day (mean temperature, peak UV and rainfall from the hourly forecast) instead of a single dawn reading.
 - Uses local rain, temperature, sunlight/UV, optional outdoor humidity and soil moisture, irrigation and fertilization settings.
 - Accepts a separate optional `weather` entity for hourly planning.
 - Selects the best mowing time in the chosen time window, avoiding rain, wet grass and unsafe temperatures throughout the next three hours.
@@ -39,17 +39,17 @@ https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/bl
 
 The automatic start threshold is tuned for robotic mowing. Instead of waiting for tall grass, the blueprint prefers frequent light cuts, usually around `2-4.5 mm` of estimated growth depending on the selected cutting height. The one-third blade rule is kept as a safety limit, not as the normal target.
 
-In automatic mode the blueprint performs one forecast calculation after the daily grass-growth update and saves one concrete mowing time. The selected slot must have no forecast rain and must keep temperature and humidity safe during the expected mowing horizon. That saved time is not moved by background forecast changes. By default, mowing is allowed only between `10 C` and `25 C`. If it is too hot, the blueprint first looks for the nearest cooler time on the same day. Without FiatLux it searches until `22:00`; with the accessory confirmed it can continue searching through the night until `05:00`.
+Every mowing time is produced by one shared planner: the daily grass-growth update, a blocked start, an interrupted cycle, a completed cycle and a manual mowing all use the same calculation, so every notification shows the time that is actually saved in the helper. The selected slot must have no forecast rain and must keep temperature and humidity safe during the expected mowing horizon. A time planned for today is not moved by background forecast changes; a time planned for a later day is re-evaluated with a fresh forecast at the next daily update. By default, mowing is allowed only between `10 C` and `25 C`. If it is too hot, the blueprint first looks for the nearest cooler time on the same day. Without FiatLux it searches until `22:00`; with the accessory confirmed it can continue searching through the night until `05:00`.
 
 For the best local decisions, use your own weather station or local outdoor sensors for measured conditions. **MeteoFusion HA** is the recommended hourly forecast source: the blueprint automatically recognizes its `smart_service.weather.v1` context, uses live rain rate and daily rainfall, and prefers forecast slots with higher MeteoFusion confidence. A standard `weather` entity such as Tomorrow.io remains supported. If no hourly forecast is selected, the blueprint uses the configured mowing window and validates live conditions at start time.
 
 Forecast rain is used while choosing the original mowing time, so the saved plan prefers a genuinely dry forecast window. At the saved start time a working binary rain sensor becomes authoritative: a dry sensor allows the cycle to begin even if the forecast changed after planning. If the sensor changes to rain during edge or normal mowing, the robot is sent back to the dock. When the selected rain sensor is unavailable, MeteoFusion or the standard weather entity remains the protective fallback.
 
-The post-rain drying delay starts only after a real `on` to `off` transition of the selected rain sensor. A Home Assistant restart or a temporary `unavailable` state followed by `off` cannot restart the drying timer. Trace precipitation below `0.2 mm` is ignored, preventing sensor noise from repeatedly postponing mowing.
+The post-rain drying delay (3 hours, 6 hours after heavy rain) is counted from the moment the selected rain sensor turned dry, and only when at least `0.2 mm` of rain was measured since midnight, so trace precipitation and sensor noise cannot postpone mowing. The delay is respected by the daily plan, by retries and at the start itself.
 
 Long hourly forecasts are capped to the planning horizon, so providers such as Pirate Weather can return many forecast records without making the Home Assistant template exceed its output limit.
 
-If actual rain or an unsafe measured temperature blocks the saved start, the blueprint performs one fresh forecast calculation, stores a new concrete time and explains the reason in the notification. Notifications are limited to the daily grass-growth calculation, a real postponement at start, mowing start, and mowing completion or interruption.
+If actual rain, wet grass, an unsafe measured temperature or the mower state blocks the saved start, or the cycle is interrupted, the blueprint plans a new concrete time from that moment and explains the reason in the notification. Retries after non-weather blockers are spaced out (for example two hours when the mower is not in the dock), so the same obstacle does not produce a notification every few minutes. Notifications are limited to the daily grass-growth calculation, a real postponement at start, mowing start, and mowing completion or interruption. They are short: a confirmed `Termin koszenia` (mowing time) when the forecast confirms good conditions, otherwise a `Termin ponownego sprawdzenia` (next check time) with a one-sentence reason.
 
 ## Before You Start
 

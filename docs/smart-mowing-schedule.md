@@ -28,6 +28,8 @@ The growth estimate needs these external Home Assistant sources:
 - Soil moisture in `%`, if you have a lawn soil probe. This input is optional.
 - Sunlight/UV sensor on a 0-10 scale, or a `weather` entity with the `uv_index` attribute.
 
+When an hourly forecast is configured, the daily growth estimate uses the forecast for the next 24 hours: mean temperature, peak UV index and total rainfall (the measured rainfall is used when it is higher). Without a forecast the configured sources are used; a night-time UV reading below `1` is replaced by a typical value for the current month, and a 24 h mean temperature sensor is recommended.
+
 The calculation is intentionally conservative. Temperature now uses a cool-season turf Growth Potential (GP) curve: growth is strongest around a mild optimum near `20 C`, then drops when it is too cold or too hot. Soil moisture, recent rainfall, light, irrigation, fertilization and season still adjust the final result. Winter months strongly reduce the estimate, spring and autumn reduce it, and the main growing season uses the full multiplier.
 
 If the lawn has automatic irrigation, enable **Automatyczne nawadnianie** in the blueprint. No irrigation switch or section list is needed. The blueprint then treats the lawn as regularly watered and applies the **Korekta wzrostu przy nawadnianiu** percentage, for example `140%` when irrigated grass grows clearly faster than the weather-only estimate.
@@ -55,7 +57,7 @@ There is a package example in `docs/smart-mowing-helpers-package.yaml` with all 
 
 ## How the schedule is chosen
 
-Every morning the blueprint calculates `growth_today_mm` with the GP-based model:
+Every morning the blueprint calculates the daily growth with the GP-based model, using the conditions expected for the whole day:
 
 ```text
 8.5 mm * GP temperature factor * water factor * soil moisture factor * sunlight factor * season factor * irrigation/fertilization corrections
@@ -63,7 +65,7 @@ Every morning the blueprint calculates `growth_today_mm` with the GP-based model
 
 That value is added to the `input_number` helper. At the configured start times, the automation starts mowing only when:
 
-- the mower is docked or paused,
+- the mower is docked,
 - the battery is above the configured minimum,
 - the current outdoor temperature is inside the configured range, `10-25 C` by default,
 - the mower rain sensor is off,
@@ -81,7 +83,7 @@ The next planned mowing helper is updated after the daily growth calculation.
 
 For the best local decisions, use your own weather station or local outdoor sensors for current temperature, accumulated rainfall, humidity and sunlight. Select **MeteoFusion HA** as the optional hourly `weather` entity when it is installed. The blueprint automatically consumes its `smart_service.weather.v1` context, including live rain rate, daily rainfall and forecast confidence. Standard Home Assistant weather providers, including Tomorrow.io, remain supported. Without a forecast entity the automation uses the configured mowing window and validates live conditions when the saved start time arrives.
 
-The drying delay starts only after a real `on` to `off` transition of the selected rain sensor. A restart, integration reload or temporary `unavailable` state followed by `off` cannot restart it. Trace precipitation below `0.2 mm` is ignored, so sensor noise does not repeatedly postpone mowing.
+The drying delay is counted from the moment the selected rain sensor turned dry, and only when at least `0.2 mm` of rain was measured since midnight, so trace precipitation does not postpone mowing. It is 3 hours, or 6 hours when the measured rainfall exceeds the heavy-rain threshold, and it applies to the daily plan, to retries and to the start check.
 
 In automatic mode the blueprint:
 
@@ -95,15 +97,22 @@ In automatic mode the blueprint:
 - first searches for a suitable cooler hour on the same day when the current or planned temperature is outside the allowed range,
 - extends the same-day search through the night until `05:00` when **Czy robot ma zamontowane akcesorium FiatLux?** is enabled.
 
-The stored start time is locked until execution. Periodic forecast changes do not rewrite the `input_datetime` helper and cannot silently move mowing from one hour to another.
+A start time planned for today is locked until execution. Periodic forecast changes do not rewrite the `input_datetime` helper and cannot silently move mowing from one hour to another. A time planned for a later day is re-evaluated with a fresh forecast at the next daily update, and the notification says so.
 
 When estimated growth is already high, delaying by another day gets a stronger penalty, so the automation should choose the nearest safe window instead of waiting for perfect conditions. Current rain and unsafe temperature still win over urgency.
 
 Forecast rain is a hard planning condition when the original start time is selected. At execution time a working binary rain sensor has priority over a forecast that may have changed in the meantime. If the sensor reports dry, forecast drift alone does not cancel the saved start. If the sensor detects rain during edge cutting or normal mowing, the automation sends the mower back to the dock. When that sensor is unavailable, MeteoFusion live rain or the standard weather state is used as the fallback.
 
-Current measurements and Worx Cloud rain delay are checked once more after the edge pass and battery recharge, before normal mowing starts. The stored time is changed only after a real blocked start, completed cycle or manual mowing synchronization. When actual rain or measured temperature blocks a start, the latest forecast is used once to save a new concrete retry time.
+Current measurements and Worx Cloud rain delay are checked once more after the edge pass and battery recharge, before normal mowing starts. The stored time is changed only by the daily update, a real blocked start, an interrupted or completed cycle, or manual mowing synchronization. All of these use one shared planner that starts from the current moment, respects the drying delay, the minimum break and the expected grass growth, and uses the latest forecast. Retries after non-weather blockers are spaced out: two hours when the mower is not in the dock, one hour for low battery, unreadable sensors, Worx rain delay or wet air.
 
-Notifications are intentionally limited to the daily growth calculation, a real postponement at start, mowing start, and mowing completion or interruption after a real start. The growth-calculation notification includes accumulated grass growth, the locked start time and the forecast weather, temperature, rain probability, rainfall and humidity for that time.
+Notifications are intentionally limited to the daily growth calculation, a real postponement at start, mowing start, and mowing completion or interruption after a real start. Every notification that announces a time shows the value saved in the helper in one of two forms:
+
+- `Termin koszenia` - the hourly forecast confirms dry and safe conditions for that time,
+- `Termin ponownego sprawdzenia` - the conditions are not confirmed yet (no forecast, the time is beyond the forecast range, or the best available time still carries a risk); a one-sentence reason is added.
+
+When the forecast covers the time, a short forecast line is added. The daily notification also shows the accumulated and daily grass growth.
+
+The automation runs in parallel mode: the daily growth update is never skipped because a long mowing cycle is still running, while start and manual-mowing triggers are ignored as long as another run of the automation is active.
 
 In fixed-time mode the helper still follows the configured primary start and backup attempt, but the same weather, temperature and FiatLux protections apply.
 

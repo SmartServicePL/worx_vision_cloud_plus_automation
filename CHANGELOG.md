@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.0 - 2026-09-26
+
+- Fixed retry times after an interrupted cycle: the next attempt was calculated before the cycle started, so notifications announced a time that had already passed and the mower did not restart until the next daily update. Every interruption now plans a new time from the moment it happens.
+- Fixed notifications describing every interruption, including rain, as a "quick technical retry".
+- Fixed the grass-growth estimate being calculated from a single dawn reading (UV close to zero, near-minimum temperature, almost no rain since midnight), which underestimated growth several times and pushed mowing days later than necessary. The daily estimate now uses the hourly forecast for the next 24 hours (mean temperature, peak UV, rainfall), with a seasonal UV fallback for night-time sensor readings.
+- Fixed contradictory mowing dates: the daily plan, blocked starts, interruptions, completed cycles and manual mowing now use one shared planner, so the time in every notification is the time saved in the helper.
+- Fixed the post-edge temperature retry, which read the forecast before it was requested and always moved mowing to the next day; hot or humid conditions after the edge pass now lead to the nearest suitable time found in the forecast.
+- Fixed the fallback plan when no safe slot exists in the forecast: it no longer jumps to the end of the forecast horizon; the least risky slot or the first window beyond the forecast is used.
+- Fixed notifications presenting default values (current temperature, 60% humidity, 0 mm rain) as a forecast when the planned time is outside the forecast range.
+- Fixed repeated postponement notifications every few minutes when the start was blocked by the mower state, battery or sensors; retries are now spaced out according to the cause.
+- Fixed a possible night start without FiatLux after rain: the post-rain drying delay no longer rewrites the planned time directly, and all times come from the planner's allowed hours.
+- Fixed the drying delay being lost when the daily update ran shortly after rain.
+- Fixed the daily growth update and other triggers being skipped while a long mowing cycle was running; the automation now runs in parallel mode with guards that prevent overlapping cycles.
+- Fixed silent stops without a new plan when the mower state became unavailable right after a command.
+- Fixed time handling to use the helpers' timestamps and time-zone aware calculations, including daylight saving time changes.
+- A stale or missing planned time is now restored automatically.
+- Slot selection now weighs temperature, humidity, wind, forecast confidence and the preferred window instead of practically always choosing the earliest slot; high grass growth still favours the earliest safe time.
+- Increased the Vision / RTK completion monitoring limit to 12 hours for large lawns with several recharge cycles.
+- Simplified notifications: each one shows either a confirmed mowing time ("Termin koszenia") when the forecast confirms good conditions, or a next check time ("Termin ponownego sprawdzenia") with a short reason. Notification frequency is unchanged.
+
 ## 0.6.2 - 2026-08-13
 
 - Fixed repeated false rain postponements caused by a rain sensor recovering from `unavailable` or by a Home Assistant restart changing the entity's `last_changed` timestamp.

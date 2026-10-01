@@ -12,6 +12,9 @@ blueprint:
       podlewanie i nawożenie,
     - preferuje wybrane okno czasowe, ale w razie potrzeby szuka bezpiecznej godziny poza nim,
     - omija deszcz, świeżo mokry trawnik i temperatury poza ustawionym zakresem,
+    - rozpoznaje rosę po różnicy między temperaturą powietrza a punktem rosy: trawa
+      jest uznawana za suchą, gdy powietrze jest co najmniej 2,5 °C cieplejsze od punktu rosy,
+    - gdy robot utknie lub zgłosi inny błąd w trakcie cyklu, od razu wysyła powiadomienie,
     - preferuje częste, lekkie koszenie robotem zamiast czekania na wysoką trawę.
 
     Źródło pogody:
@@ -128,7 +131,7 @@ blueprint:
                 - domain: weather
         outdoor_humidity_sensor:
           name: Wilgotność powietrza opcjonalnie
-          description: Lokalny sensor wilgotności zewnętrznej. Pomaga rozpoznać rosę i bardzo mokrą trawę. Bez niego automatyzacja użyje wilgotności z encji weather, jeśli jest dostępna.
+          description: Lokalny sensor wilgotności zewnętrznej. Razem z temperaturą służy do wyliczenia punktu rosy; start jest możliwy, gdy powietrze jest co najmniej 2,5 °C cieplejsze od punktu rosy, czyli gdy rosa wyparowała. Bez tego sensora automatyzacja użyje wilgotności z encji weather, jeśli jest dostępna.
           default: ""
           selector:
             entity:
@@ -638,6 +641,30 @@ variables:
   forecast_dry_horizon_hours: 3
   forecast_min_future_hours: 2
   wet_grass_humidity_percent: 88
+  # Trawa jest uznawana za suchą dopiero, gdy powietrze jest co najmniej o tyle stopni
+  # cieplejsze od punktu rosy. Przy mniejszej różnicy rosa jeszcze nie wyparowała.
+  min_dew_point_spread_c: 2.5
+  # Po tylu minutach ciągłego stanu błędu w trakcie cyklu automatyzacja uznaje, że robot utknął.
+  mower_fault_minutes: 5
+  mower_error_names:
+    trapped: robot utknął
+    trapped timeout: robot utknął i nie może się wydostać
+    lifted: robot został podniesiony
+    upside down: robot jest przewrócony
+    wire missing: brak sygnału przewodu
+    outside wire: robot jest poza przewodem
+    wire bounced: robot odbił się od przewodu
+    reverse wire: odwrócony przewód
+    blade motor blocked: zablokowany silnik noży
+    wheel motor blocked: zablokowany silnik kół
+    battery low: niski poziom baterii
+    charge error: błąd ładowania
+    battery temperature error: temperatura baterii poza zakresem
+    timeout finding home: robot nie może znaleźć bazy
+    charging station docking error: błąd dokowania do stacji
+    locked: robot jest zablokowany PIN-em
+    close door to mow: zamknij klapkę, aby kosić
+    close door to go home: zamknij klapkę, aby wrócić do bazy
   forecast_rain_block_mm: 0.2
   significant_measured_rain_mm: 0.2
   high_rain_probability_percent: 60
@@ -801,8 +828,10 @@ variables:
     {% set base = dry_after_rain_hours | float(3) %}
     {{ base * (2 if (rain_mm | float(0)) > (max_rain_24h_mm | float(3)) else 1) }}
   # Chwila, od której trawa jest uznawana za suchą. Trwający opad liczy się od teraz,
-  # a zakończony opad od chwili przejścia czujnika w stan suchy, ale tylko gdy od
-  # północy zmierzono istotny opad (co najmniej 0,2 mm).
+  # a zakończony opad od chwili przejścia czujnika w stan suchy. Zakończony opad jest
+  # brany pod uwagę tylko wtedy, gdy zmierzono istotny opad (co najmniej 0,2 mm) i czujnik
+  # sumy opadu zmienił się niedawno; włączenie czujnika bez przyrostu opadu (np. od rosy)
+  # albo jednoczesny zanik i powrót obu czujników po utracie łączności są pomijane.
   rain_drying_ready_ts: >-
     {% set drying_seconds = (rain_drying_hours | float(3)) * 3600 %}
     {% set now_value = as_timestamp(now()) %}
@@ -811,8 +840,17 @@ variables:
     {% elif (local_rain_sensor_available | string | lower) == 'true'
           and is_state(rain_binary_sensor, 'off')
           and (rain_mm | float(0)) >= (significant_measured_rain_mm | float(0.2)) %}
-      {% set ready = as_timestamp(states[rain_binary_sensor].last_changed) + drying_seconds %}
-      {{ ready if ready > now_value else 0 }}
+      {% set off_ts = as_timestamp(states[rain_binary_sensor].last_changed) %}
+      {% set ready = off_ts + drying_seconds %}
+      {% set amount_state = states[rain_source_entity] if rain_source_entity.split('.')[0] != 'weather' else none %}
+      {% if amount_state is not none %}
+        {% set amount_ts = as_timestamp(amount_state.last_changed) %}
+        {% set recent_rain = (now_value - amount_ts) <= drying_seconds + 7200
+            and ((off_ts - amount_ts) | abs) > 60 %}
+      {% else %}
+        {% set recent_rain = true %}
+      {% endif %}
+      {{ ready if ready > now_value and recent_rain else 0 }}
     {% else %}
       0
     {% endif %}
@@ -831,6 +869,18 @@ variables:
     {{ (selected | length > 0 and states(selected) not in ['unknown', 'unavailable', 'none', ''])
        or ((forecast_weather_entity | trim | length) > 0
            and state_attr(forecast_weather_entity | trim, 'humidity') is not none) }}
+  # Różnica między temperaturą powietrza a punktem rosy (wzór Magnusa). 99 oznacza brak danych.
+  dew_point_spread_c: >-
+    {% set t = temp_c | float(none) %}
+    {% set rh = outdoor_humidity_percent | float(none) %}
+    {% if (outdoor_humidity_available | string | lower) == 'true'
+          and (temperature_available | string | lower) == 'true'
+          and t is not none and rh is not none and rh > 0 %}
+      {% set g = (([rh, 100] | min) / 100) | log + 17.62 * t / (243.12 + t) %}
+      {{ (t - 243.12 * g / (17.62 - g)) | round(1) }}
+    {% else %}
+      99
+    {% endif %}
   sunlight_index: >-
     {% if sunlight_source_entity.split('.')[0] == 'weather' %}
       {{ state_attr(sunlight_source_entity, 'uv_index') | float(5) }}
@@ -919,15 +969,16 @@ variables:
     {% elif state_attr(mower_entity, 'rain_delay') == true %}rain_delay
     {% elif (rain_active_now | string | lower) == 'true' %}rain
     {% elif (rain_drying_ready_ts | float(0)) > as_timestamp(now()) %}drying
-    {% elif (outdoor_humidity_available | string | lower) == 'true'
-          and (outdoor_humidity_percent | float(60)) > (wet_grass_humidity_percent | float(88)) %}humidity
+    {% elif (dew_point_spread_c | float(99)) < (min_dew_point_spread_c | float(2.5)) %}humidity
     {% elif (soil_moisture | float) > (max_soil_moisture_percent | float) %}soil
     {% elif (estimated_growth_mm | float) < (growth_threshold_mm | float) %}growth
     {% elif (mowing_gap_ready_ts | float(0)) > as_timestamp(now()) %}gap
     {% else %}{{ '' }}{% endif %}
   start_block_reason: >-
     {% set code = start_block_code | trim %}
-    {% if code == 'mower_away' %}
+    {% if code == 'mower_away' and is_state(mower_entity, 'error') %}
+      {% set raw = state_attr(mower_entity, 'error_description') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}robot zgłosił błąd{% if raw %}: {{ mower_error_names.get(raw | lower, raw) }} ({{ raw }}){% endif %}. Sprawdź robota na trawniku
+    {% elif code == 'mower_away' %}
       kosiarka nie jest w bazie (stan: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }})
     {% elif code == 'config' %}
       wybrano koszenie nocne, ale nie potwierdzono zamontowanego akcesorium FiatLux
@@ -948,7 +999,7 @@ variables:
     {% elif code == 'drying' %}
       trawa schnie po deszczu; bezpieczny start najwcześniej o {{ (rain_drying_ready_ts | float(0)) | timestamp_custom('%H:%M', true) }}
     {% elif code == 'humidity' %}
-      wilgotność powietrza wynosi {{ outdoor_humidity_percent | float | round(0) | int }}%, więc trawa może być mokra od rosy lub mgły
+      powietrze jest tylko {{ dew_point_spread_c | float(0) | round(1) | string | replace('.', ',') }} °C cieplejsze od punktu rosy (wilgotność {{ outdoor_humidity_percent | float | round(0) | int }}%), więc trawa jest jeszcze mokra od rosy lub mgły
     {% elif code == 'soil' %}
       gleba jest zbyt mokra: {{ soil_moisture }}%
     {% elif code == 'growth' %}
@@ -1022,6 +1073,14 @@ actions:
                         {%- set t = as_timestamp(item.get('datetime'), 0) | float(0) -%}
                         {%- if t > 0 -%}
                           {%- set condition = item.get('condition') -%}
+                          {%- set item_temp = item.get('temperature') | float(none) -%}
+                          {%- set item_hum = item.get('humidity') | float(none) -%}
+                          {%- if item_temp is not none and item_hum is not none and item_hum > 0 -%}
+                            {%- set g = (([item_hum, 100] | min) / 100) | log + 17.62 * item_temp / (243.12 + item_temp) -%}
+                            {%- set item_spread = (item_temp - 243.12 * g / (17.62 - g)) | round(1) -%}
+                          {%- else -%}
+                            {%- set item_spread = none -%}
+                          {%- endif -%}
                           {%- set ns.items = ns.items + [{
                             't': t,
                             'temp': item.get('temperature') | float(none),
@@ -1032,7 +1091,10 @@ actions:
                             'uv': item.get('uv_index') | float(none),
                             'conf': item.get('confidence') | float(70),
                             'cond': (condition | string) if condition is not none else '',
-                            'bad': condition in bad
+                            'bad': condition in bad,
+                            'spread': item_spread,
+                            'wet': (item_spread < (min_dew_point_spread_c | float(2.5))) if item_spread is not none
+                                   else (item_hum is not none and item_hum > (wet_grass_humidity_percent | float(88)))
                           }] -%}
                         {%- endif -%}
                       {%- endfor -%}
@@ -1209,7 +1271,7 @@ actions:
                           {%- elif first <= last -%}
                             {%- for slot in range(0, (((last - first) / step) | round(0, 'floor') | int) + 1) -%}
                               {%- set ts = first + slot * step -%}
-                              {%- set fc = namespace(seen=false, rain=0, prob=0, temp=none, hum=none, wind=0, bad=false, conf=70) -%}
+                              {%- set fc = namespace(seen=false, rain=0, prob=0, temp=none, hum=none, wind=0, bad=false, conf=70, wet=false) -%}
                               {%- set rec = namespace(rain=0, bad=false, heavy=0) -%}
                               {%- set fut = namespace(seen=0, rain=0, prob=0, unsafe=false) -%}
                               {%- for it in items -%}
@@ -1220,6 +1282,7 @@ actions:
                                     {%- set fc.prob = it.prob -%}
                                     {%- set fc.temp = it.temp -%}
                                     {%- set fc.hum = it.hum -%}
+                                    {%- set fc.wet = it.wet -%}
                                     {%- set fc.wind = it.wind -%}
                                     {%- set fc.bad = it.bad -%}
                                     {%- set fc.conf = it.conf -%}
@@ -1241,14 +1304,14 @@ actions:
                                   {%- endif -%}
                                   {%- if it.bad
                                       or (it.temp is not none and (it.temp < tmin or it.temp > tmax))
-                                      or (it.hum is not none and it.hum > wet) -%}
+                                      or it.wet -%}
                                     {%- set fut.unsafe = true -%}
                                   {%- endif -%}
                                 {%- endif -%}
                               {%- endfor -%}
                               {%- set rec_wet = rec.rain > block or rec.bad or rec.heavy > heavy_mm -%}
                               {%- set temp_ok = fc.temp is none or (fc.temp >= tmin and fc.temp <= tmax) -%}
-                              {%- set hum_ok = fc.hum is none or fc.hum <= wet -%}
+                              {%- set hum_ok = not fc.wet -%}
                               {%- set rain_ok = (fc.rain + fut.rain) <= block and not fc.bad and fc.prob <= high and fut.prob <= high -%}
                               {%- set data_ok = fc.seen and fut.seen >= min_future -%}
                               {%- set safe = data_ok and temp_ok and hum_ok and rain_ok and not rec_wet and not fut.unsafe -%}
@@ -1347,7 +1410,7 @@ actions:
                     {%- set high = high_rain_probability_percent | float(60) -%}
                     {%- set dry_s = (dry_after_rain_hours | float(3)) * 3600 -%}
                     {%- set horizon_s = (forecast_dry_horizon_hours | float(3)) * 3600 -%}
-                    {%- set fc = namespace(seen=false, rain=0, prob=0, temp=none, hum=none, bad=false, conf=70, cond='') -%}
+                    {%- set fc = namespace(seen=false, rain=0, prob=0, temp=none, hum=none, bad=false, conf=70, cond='', wet=false, spread=none) -%}
                     {%- set rec = namespace(rain=0, bad=false, heavy=0) -%}
                     {%- set fut = namespace(seen=0, rain=0, prob=0, unsafe=false) -%}
                     {%- for it in items -%}
@@ -1358,6 +1421,8 @@ actions:
                           {%- set fc.prob = it.prob -%}
                           {%- set fc.temp = it.temp -%}
                           {%- set fc.hum = it.hum -%}
+                          {%- set fc.wet = it.wet -%}
+                          {%- set fc.spread = it.spread -%}
                           {%- set fc.bad = it.bad -%}
                           {%- set fc.conf = it.conf -%}
                           {%- set fc.cond = it.cond -%}
@@ -1379,7 +1444,7 @@ actions:
                         {%- endif -%}
                         {%- if it.bad
                             or (it.temp is not none and (it.temp < tmin or it.temp > tmax))
-                            or (it.hum is not none and it.hum > wet) -%}
+                            or it.wet -%}
                           {%- set fut.unsafe = true -%}
                         {%- endif -%}
                       {%- endif -%}
@@ -1388,13 +1453,14 @@ actions:
                     {%- set safe = fc.seen
                         and fut.seen >= (forecast_min_future_hours | int(2))
                         and (fc.temp is none or (fc.temp >= tmin and fc.temp <= tmax))
-                        and (fc.hum is none or fc.hum <= wet)
+                        and not fc.wet
                         and (fc.rain + fut.rain) <= block and not fc.bad
                         and fc.prob <= high and fut.prob <= high
                         and not rec_wet and not fut.unsafe -%}
                     {{ {'seen': fc.seen, 'safe': safe, 'rain': fc.rain, 'fut_rain': fut.rain,
                         'prob': [fc.prob, fut.prob] | max, 'temp': fc.temp, 'hum': fc.hum,
-                        'cond': fc.cond, 'conf': fc.conf, 'rec_wet': rec_wet} }}
+                        'cond': fc.cond, 'conf': fc.conf, 'rec_wet': rec_wet, 'wet': fc.wet,
+                        'spread': fc.spread, 'fut_unsafe': fut.unsafe} }}
               - action: input_datetime.set_datetime
                 alias: Zapisz wyznaczony termin koszenia
                 target:
@@ -1444,8 +1510,10 @@ actions:
                       duże ryzyko deszczu ({{ d.prob | round(0) | int }}%), a w najbliższych dniach nie ma lepszego terminu
                     {% elif d.rec_wet %}
                       trawa może być jeszcze mokra po deszczu, a w najbliższych dniach nie ma lepszego terminu
-                    {% elif d.hum is not none and d.hum > (wet_grass_humidity_percent | float(88)) %}
-                      wysoka wilgotność powietrza ({{ d.hum | round(0) | int }}%), więc trawa może być mokra od rosy
+                    {% elif d.wet and d.spread is not none %}
+                      w prognozie powietrze jest tylko {{ d.spread | round(1) | string | replace('.', ',') }} °C cieplejsze od punktu rosy (wilgotność {{ (d.hum | round(0) | int) if d.hum is not none else '?' }}%), więc trawa może być jeszcze mokra od rosy
+                    {% elif d.wet %}
+                      wysoka wilgotność powietrza ({{ (d.hum | round(0) | int) if d.hum is not none else '?' }}%), więc trawa może być mokra od rosy
                     {% elif d.temp is not none and (d.temp < tmin or d.temp > tmax) %}
                       prognozowana temperatura {{ d.temp | round(0) | int }} °C jest poza dozwolonym zakresem {{ tmin | int }}–{{ tmax | int }} °C
                     {% else %}
@@ -1711,7 +1779,8 @@ actions:
                   and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
                        or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
                  or state_attr(mower_entity, 'rain_delay') == true
-                 or is_state(mower_entity, 'docked') }}
+                 or is_state(mower_entity, 'docked')
+                 or (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60) }}
             alias: Poczekaj na zakończenie krawędzi i powrót do bazy
             timeout: "02:00:00"
             continue_on_timeout: true
@@ -1724,7 +1793,8 @@ actions:
                       (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
                        and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
                        and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
-                     and state_attr(mower_entity, 'rain_delay') != true }}
+                     and state_attr(mower_entity, 'rain_delay') != true
+                     and not (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60) }}
             then:
               - delay: "00:01:00"
                 alias: Ustabilizuj potwierdzenie bazy po krawędziach
@@ -1754,7 +1824,7 @@ actions:
                 sequence:
                   - if:
                       - condition: template
-                        value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                        value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown', 'error'] }}"
                     then:
                       - action: lawn_mower.dock
                         continue_on_error: true
@@ -1769,6 +1839,20 @@ actions:
                       finished_at: "{{ now().strftime('%d.%m o %H:%M') }}"
                       min_delay_minutes: 0
                   - stop: Deszcz przerwał etap krawędzi.
+              - conditions:
+                  - condition: template
+                    value_template: "{{ is_state(mower_entity, 'error') }}"
+                sequence:
+                  - event: worx_smart_mowing_replan
+                    event_data:
+                      mower_entity: "{{ mower_entity }}"
+                      kind: interrupted
+                      reason: >-
+                        {% set raw = state_attr(mower_entity, 'error_description') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}robot zgłosił błąd{% if raw %}: {{ mower_error_names.get(raw | lower, raw) }} ({{ raw }}){% endif %}. Sprawdź robota na trawniku
+                      started_at: "{{ mowing_cycle_started_at }}"
+                      finished_at: "{{ now().strftime('%d.%m o %H:%M') }}"
+                      min_delay_minutes: 120
+                  - stop: Robot zgłosił błąd podczas przycinania krawędzi.
               - conditions:
                   - condition: template
                     value_template: "{{ not is_state(mower_entity, 'docked') }}"
@@ -1833,7 +1917,7 @@ actions:
                       mower_entity: "{{ mower_entity }}"
                       kind: interrupted
                       reason: >-
-                        robot opuścił bazę podczas ładowania po krawędziach (stan: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }})
+                        {% if is_state(mower_entity, 'error') %}{% set raw = state_attr(mower_entity, 'error_description') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}robot zgłosił błąd{% if raw %}: {{ mower_error_names.get(raw | lower, raw) }} ({{ raw }}){% endif %}. Sprawdź robota na trawniku{% else %}robot opuścił bazę podczas ładowania po krawędziach (stan: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}){% endif %}
                       started_at: "{{ mowing_cycle_started_at }}"
                       finished_at: "{{ now().strftime('%d.%m o %H:%M') }}"
                       min_delay_minutes: 30
@@ -1876,6 +1960,16 @@ actions:
                   -1
                 {% endif %}
           - variables:
+              spread_after_edges: >-
+                {% set t = temperature_after_edges_c | float(-99) %}
+                {% set rh = humidity_after_edges | float(-1) %}
+                {% if t > -90 and rh > 0 %}
+                  {% set g = (([rh, 100] | min) / 100) | log + 17.62 * t / (243.12 + t) %}
+                  {{ (t - 243.12 * g / (17.62 - g)) | round(1) }}
+                {% else %}
+                  99
+                {% endif %}
+          - variables:
               post_edge_block_code: >-
                 {% if (temperature_after_edges_available | string | lower) != 'true' %}sensor
                 {% elif (temperature_after_edges_c | float(-99)) < (min_mowing_temperature_c | float(10))
@@ -1889,7 +1983,7 @@ actions:
                       (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
                        and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
                             or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])) %}rain
-                {% elif (humidity_after_edges | float(-1)) > (wet_grass_humidity_percent | float(88)) %}humidity
+                {% elif (spread_after_edges | float(99)) < (min_dew_point_spread_c | float(2.5)) %}humidity
                 {% elif not is_state(mower_entity, 'docked')
                       or (states(battery_sensor) | float(0)) < (post_edge_battery_percent | float(80)) %}mower
                 {% else %}{{ '' }}{% endif %}
@@ -1909,7 +2003,7 @@ actions:
                 {% elif code == 'rain' %}
                   po krawędziach lokalny pomiar lub MeteoFusion HA wskazuje trwający opad
                 {% elif code == 'humidity' %}
-                  po krawędziach wilgotność powietrza wynosi {{ humidity_after_edges | float | round(0) | int }}%, więc trawa może być mokra
+                  po krawędziach powietrze jest tylko {{ spread_after_edges | float(0) | round(1) | string | replace('.', ',') }} °C cieplejsze od punktu rosy (wilgotność {{ humidity_after_edges | float | round(0) | int }}%), więc trawa jest jeszcze mokra
                 {% elif code == 'mower' %}
                   przed zwykłym koszeniem robot nie jest w bazie albo bateria ma mniej niż {{ post_edge_battery_percent }}% (stan: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}, bateria {{ states(battery_sensor) }}%)
                 {% else %}
@@ -2070,9 +2164,34 @@ actions:
                          and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
                        and state_attr(mower_entity, 'rain_delay') != true
                        and not completed
+                       and not (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60)
                        and repeat.index <= (normal_mowing_monitor_limit_minutes | int(720)) }}
               sequence:
                 - delay: "00:01:00"
+          - if:
+              - condition: template
+                alias: Robot zgłosił błąd podczas koszenia
+                value_template: "{{ (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60) }}"
+            then:
+              - variables:
+                  reduced_growth_mm: "{{ ((states(growth_helper) | float(0)) * 0.7) | round(1) }}"
+              - action: input_number.set_value
+                alias: Zmniejsz przyrost po częściowym koszeniu
+                target:
+                  entity_id: !input growth_helper
+                data:
+                  value: "{{ reduced_growth_mm }}"
+              - event: worx_smart_mowing_replan
+                event_data:
+                  mower_entity: "{{ mower_entity }}"
+                  kind: interrupted
+                  reason: >-
+                    {% set raw = state_attr(mower_entity, 'error_description') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}robot zgłosił błąd{% if raw %}: {{ mower_error_names.get(raw | lower, raw) }} ({{ raw }}){% endif %}. Sprawdź robota na trawniku
+                  started_at: "{{ mowing_cycle_started_at }}"
+                  finished_at: "{{ now().strftime('%d.%m o %H:%M') }}"
+                  growth_note: Trawnik skoszono częściowo, więc szacowany przyrost trawy zmniejszono o 30%.
+                  min_delay_minutes: 120
+              - stop: Robot zgłosił błąd podczas koszenia.
           - variables:
               normal_mowing_finished_ts: >-
                 {% if is_state(mower_entity, 'docked') %}
@@ -2227,6 +2346,7 @@ actions:
                     {% set completed = vision_complete if mower_cycle_type == 'vision_rtk'
                         else is_state(mower_entity, 'docked') %}
                     {{ not completed
+                       and not (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60)
                        and repeat.index <= (normal_mowing_monitor_limit_minutes | int(720)) }}
               sequence:
                 - delay: "00:01:00"
@@ -2249,7 +2369,8 @@ actions:
                   notification_id: "{{ notification_id }}"
                   title: "Worx: koszenie ręczne przerwane"
                   message: |-
-                    Koszenie uruchomione ręcznie {{ manual_mow_started_at | trim }} nie zakończyło się pełnym cyklem (stan robota: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}).
+                    Koszenie uruchomione ręcznie {{ manual_mow_started_at | trim }} nie zakończyło się pełnym cyklem.
+                    {% if is_state(mower_entity, 'error') %}Przyczyna: {% set raw = state_attr(mower_entity, 'error_description') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}robot zgłosił błąd{% if raw %}: {{ mower_error_names.get(raw | lower, raw) }} ({{ raw }}){% endif %}. Sprawdź robota na trawniku.{% else %}Stan robota: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}.{% endif %}
                     Szacowany przyrost trawy pozostaje bez zmian: {{ states(growth_helper) | float(0) | round(1) | string | replace('.', ',') }} mm.
               - stop: Ręczne koszenie nie zostało potwierdzone jako zakończone.
           - variables:

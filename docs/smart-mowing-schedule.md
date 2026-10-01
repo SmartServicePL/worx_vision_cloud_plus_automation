@@ -81,6 +81,16 @@ When those conditions are met, the automation first sends the dedicated edge-onl
 
 The next planned mowing helper is updated after the daily growth calculation.
 
+### Dew and wet grass
+
+Dew is detected from the dew-point spread, the difference between the air temperature and its dew point (calculated from the configured temperature and humidity with the Magnus formula). Grass is treated as wet while the spread is below `2.5 C`. This corresponds to roughly 85% relative humidity, but unlike a fixed humidity limit it reflects how close the air is to condensation at any temperature, so the start waits until the morning dew has actually evaporated. The same rule is applied to the live start check, to the check after the edge pass and to every forecast hour used for planning. When a forecast item has no temperature, the previous `88%` humidity limit is used for that hour.
+
+The rain drying delay is taken into account only when measurable rain was recorded recently: the rain sensor must have turned dry after at least `0.2 mm` of rain and the rain amount sensor must have changed within the drying period. A rain sensor that switches on without any measured rain (for example a piezo sensor wetted by dew), or a short loss of connection that makes both sensors unavailable at the same moment, no longer extends the drying delay.
+
+### Mower faults during a cycle
+
+If the mower reports an error (for example `trapped timeout`, `lifted` or `wheel motor blocked`) for five minutes while the automation is running a cycle, the cycle is stopped right away, a notification names the error in plain language and the next attempt is planned no earlier than two hours later. A partially mowed lawn keeps 70% of its accumulated growth. Starts are also postponed while the mower remains in an error state.
+
 For the best local decisions, use your own weather station or local outdoor sensors for current temperature, accumulated rainfall, humidity and sunlight. Select **MeteoFusion HA** as the optional hourly `weather` entity when it is installed. The blueprint automatically consumes its `smart_service.weather.v1` context, including live rain rate, daily rainfall and forecast confidence. Standard Home Assistant weather providers, including Tomorrow.io, remain supported. Without a forecast entity the automation uses the configured mowing window and validates live conditions when the saved start time arrives.
 
 The drying delay is counted from the moment the selected rain sensor turned dry, and only when at least `0.2 mm` of rain was measured since midnight, so trace precipitation does not postpone mowing. It is 3 hours, or 6 hours when the measured rainfall exceeds the heavy-rain threshold, and it applies to the daily plan, to retries and to the start check.
@@ -91,7 +101,7 @@ In automatic mode the blueprint:
 - checks 15-minute forecast slots over the next few days,
 - limits very long hourly forecast lists to the planning horizon, which keeps Pirate Weather responses within Home Assistant's template size limit,
 - starts from the selected mowing window preset: morning, before noon, noon, afternoon, evening, night, or custom hours,
-- rejects slots with wet-grass risk, unsafe humidity, or temperatures outside the configured mowing range,
+- rejects slots with wet-grass risk (forecast rain, recent rain or dew), or temperatures outside the configured mowing range,
 - requires the forecast to remain safe for the next three hours instead of checking only the starting hour,
 - uses `06:00-22:00` as a daytime fallback when the selected daytime window has no safe slot,
 - first searches for a suitable cooler hour on the same day when the current or planned temperature is outside the allowed range,

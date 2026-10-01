@@ -29,6 +29,8 @@ https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/bl
 - Uses local rain, temperature, sunlight/UV, optional outdoor humidity and soil moisture, irrigation and fertilization settings.
 - Accepts a separate optional `weather` entity for hourly planning.
 - Selects the best mowing time in the chosen time window, avoiding rain, wet grass and unsafe temperatures throughout the next three hours.
+- Recognises dew from the dew-point spread: the grass is treated as dry only when the air is at least `2.5 C` warmer than its dew point, both at the start and in the forecast.
+- Reports a stuck or faulted mower within about five minutes during a cycle, with the error name, instead of waiting for the cycle timeouts.
 - Runs edge cutting first, waits for the mower to return to the dock and recharge to at least `80%`, then starts normal one-time mowing.
 - Lets the user choose the mower cycle type: Vision / RTK self-finishing mowing or older wired Worx timed mowing.
 - Keeps three helpers updated: estimated grass growth, last full mowing, and next planned mowing.

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.1 - 2026-10-01
+
+Dew and wet-grass detection:
+
+- Replaced the fixed `88%` humidity limit with a dew-point check. The grass is treated as dry only when the air is at least `2.5 C` warmer than its dew point, calculated from the configured temperature and humidity. With the previous limit a start was allowed as soon as humidity reached exactly `88%`, while the air was still only about `1.9 C` above the dew point and the grass was wet; on real station data this affected three of eight mornings.
+- Applied the same dew rule to the live start check, to the check after the edge pass and to every forecast hour used by the planner, so planned times already avoid mornings with dew.
+- Notifications explain a dew postponement with the measured margin above the dew point and the humidity.
+- The post-rain drying delay now requires measurable rain: a rain sensor that switches on without any measured rain (for example a piezo sensor wetted by dew) or a short loss of connection that briefly makes the station unavailable no longer extends the drying delay.
+
+Mower faults:
+
+- A mower that reports an error for five minutes during a cycle (for example stuck with `trapped timeout`) now stops the cycle immediately with a notification that names the error. Previously the automation waited up to two hours for the edge pass to finish before reacting, and the notification only said that the return to the dock was not confirmed.
+- A fault during normal mowing reduces the accumulated growth by 30% and plans the next attempt no earlier than two hours later; a fault during manual mowing is reported right away.
+- Blocked starts caused by a mower error name the error instead of a generic "not in the dock" message.
+
 ## 0.7.0 - 2026-09-26
 
 - Fixed retry times after an interrupted cycle: the next attempt was calculated before the cycle started, so notifications announced a time that had already passed and the mower did not restart until the next daily update. Every interruption now plans a new time from the moment it happens.

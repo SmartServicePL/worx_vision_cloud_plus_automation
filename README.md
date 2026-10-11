@@ -15,13 +15,25 @@ Prepared by **Smart Service**.
 
 ## Import Blueprint
 
-[![Open your Home Assistant instance and import this blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSmartServicePL%2Fworx_vision_cloud_plus_automation%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fworx_vision_cloud_plus%2Fsmart_mowing_schedule.yaml)
+The blueprint is available in three languages. They work the same way; only the texts in the Home Assistant editor and in the notifications differ. Import the one in your language.
 
-Manual import URL:
+| Language | Import |
+| --- | --- |
+| English | [![Import the English blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSmartServicePL%2Fworx_vision_cloud_plus_automation%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fworx_vision_cloud_plus%2Fsmart_mowing_schedule_en.yaml) |
+| Deutsch | [![Import the German blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSmartServicePL%2Fworx_vision_cloud_plus_automation%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fworx_vision_cloud_plus%2Fsmart_mowing_schedule_de.yaml) |
+| Polski | [![Import the Polish blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FSmartServicePL%2Fworx_vision_cloud_plus_automation%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fworx_vision_cloud_plus%2Fsmart_mowing_schedule.yaml) |
+
+Manual import URLs:
 
 ```text
+https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule_en.yaml
+https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule_de.yaml
 https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml
 ```
+
+Switching the language later: import the other file, open your automation, choose **Edit in YAML** and change `use_blueprint.path` to the new file name (for example `SmartServicePL/smart_mowing_schedule_en.yaml`). Inputs, helpers and behaviour are identical in all three files, so the inputs stay as they are.
+
+Deutsche Anleitung: [README.de.md](README.de.md).
 
 ## What It Does
 
@@ -54,7 +66,7 @@ The post-rain drying delay (3 hours, 6 hours after heavy rain) is counted from t
 
 Long hourly forecasts are capped to the planning horizon, so providers such as Pirate Weather can return many forecast records without making the Home Assistant template exceed its output limit.
 
-If actual rain, wet grass, an unsafe measured temperature or the mower state blocks the saved start, or the cycle is interrupted, the blueprint plans a new concrete time from that moment and explains the reason in the notification. Retries after non-weather blockers are spaced out (for example two hours when the mower is not in the dock), so the same obstacle does not produce a notification every few minutes. Notifications are limited to the daily grass-growth calculation, a real postponement at start, mowing start, and mowing completion or interruption. They are short: a confirmed `Termin koszenia` (mowing time) when the forecast confirms good conditions, otherwise a `Termin ponownego sprawdzenia` (next check time) with a one-sentence reason.
+If actual rain, wet grass, an unsafe measured temperature or the mower state blocks the saved start, or the cycle is interrupted, the blueprint plans a new concrete time from that moment and explains the reason in the notification. Retries after non-weather blockers are spaced out (for example two hours when the mower is not in the dock), so the same obstacle does not produce a notification every few minutes. Notifications are limited to the daily grass-growth calculation, a real postponement at start, mowing start, and mowing completion or interruption. They are short: a confirmed `Mowing time` when the forecast confirms good conditions, otherwise a `Next check` time with a one-sentence reason. When a confirmed time is outside the preferred window, the notification also says why.
 
 ## Before You Start
 
@@ -71,11 +83,27 @@ Documentation:
 - [Smart mowing setup](docs/smart-mowing-schedule.md)
 - [Helper package example](docs/smart-mowing-helpers-package.yaml)
 
-Blueprint path:
+Blueprint paths:
 
 ```text
+blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule_en.yaml
+blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule_de.yaml
 blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml
 ```
+
+## Translations
+
+The Polish blueprint `smart_mowing_schedule.yaml` is the source. The English and German files are generated from it with [`tools/blueprint_i18n.py`](tools/blueprint_i18n.py) and the string catalog [`i18n/smart_mowing_schedule.yaml`](i18n/smart_mowing_schedule.yaml), which holds every line of text with its translations. Only texts change; input keys, option values, triggers and template logic stay identical, and a test fails when a translation is missing or a generated file is out of date.
+
+To change a text or the logic, edit the Polish blueprint, then run:
+
+```bash
+python tools/blueprint_i18n.py extract blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml i18n/smart_mowing_schedule.yaml
+python tools/blueprint_i18n.py build blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml i18n/smart_mowing_schedule.yaml
+python -m unittest discover -s tests
+```
+
+`extract` adds new lines to the catalog with empty translations; fill them in before `build`. Corrections to a translation are made in the catalog, not in the generated files.
 
 ## Requirements
 

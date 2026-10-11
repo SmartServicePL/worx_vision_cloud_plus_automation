@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.0 - 2026-10-11
+
+English and German blueprints:
+
+- The blueprint is now available in English (`smart_mowing_schedule_en.yaml`) and German (`smart_mowing_schedule_de.yaml`) next to the Polish original (issue #3). Each file has its own import button and `source_url`, so it is imported and updated on its own. Inputs, option values, helpers and behaviour are identical in all three files; only the texts in the editor, the step names and the notifications are translated. An existing automation can switch language by changing `use_blueprint.path` in YAML and keeping its inputs.
+- English notifications use a decimal point and English dates (`today at 09:00`), German notifications a decimal comma (`heute um 09:00`).
+- The English and German files are generated from the Polish blueprint with `tools/blueprint_i18n.py` and the string catalog `i18n/smart_mowing_schedule.yaml`. A test, also run in GitHub Actions, fails when a translation is missing, a generated file is out of date, or a translation changes anything other than text (keys, option values, triggers or template logic).
+- German README: `README.de.md`.
+
+Fixes:
+
+- When the selected `weather` entity was unavailable, requesting the forecast failed with `Service call requested response data but did not match any entities`, which `continue_on_error` does not cover, so the daily plan, retries and the plan after mowing stopped without a time or a notification. The forecast is now requested only from an available entity; otherwise the planner works without a forecast and the notification says that the forecast is temporarily unavailable.
+
 ## 0.8.1 - 2026-10-11
 
 Home Assistant restart during a cycle:

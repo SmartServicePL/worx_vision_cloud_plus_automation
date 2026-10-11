@@ -49,6 +49,7 @@ Deutsche Anleitung: [README.de.md](README.de.md).
 - Detects manual mowing started from the WORX app and resets the growth estimate only after the full mowing cycle is confirmed.
 - Treats a run that the mower aborts after a short error and a return to the dock as interrupted, not completed.
 - Takes over a running cycle after a Home Assistant restart or an automation reload, so the mow is recorded once and not started a second time the same day.
+- Fixes a stuck cloud status: when the Worx cloud keeps showing mowing or returning (for example 104 `searching home`) although RTK has shown the mower at the station for five minutes, it sends one minute of mowing and a return to the dock so the mower reports its real state, at most once every two hours and with a notification. A return command is never sent to a docked mower.
 - Optional, off by default: mowing only on selected weekdays, only in daylight (hedgehog protection), a pause when someone is in the garden, and your own phone notification actions.
 - Rechecks live measurements, Worx Cloud rain delay and the hourly forecast before normal mowing begins after the edge pass.
 

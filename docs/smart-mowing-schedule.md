@@ -105,6 +105,12 @@ A restart of Home Assistant or a reload of automations stops every running autom
 
 A cycle counts as scheduled when the next-mowing helper is in the past, after the last mow, and no older than the monitoring limit. If the mower is docked after the restart, nothing changes. A restart while the mower charges in the dock between the edge pass and normal mowing cannot be told apart from a missed start, so the cycle starts again with the edge pass.
 
+### Stuck cloud status
+
+Sometimes the Worx cloud keeps an active state although the mower stands in the dock, for example `104 searching home` after a return command sent to a docked mower. The automation would then see the mower as away and postpone every start. When the mower entity has shown `mowing` or `returning` for five minutes while RTK places the mower at the station, and the automation is not running a cycle, it sends a one-minute one-time mowing and then a return to the dock, so the mower reports its real state. A notification says whether the status was corrected. The fix is skipped while it rains, in the dark when daylight-only mowing is enabled, or when someone is in the garden; it is retried at most once every two hours.
+
+All return commands of the automation are only sent to a mower that has left the dock, because a return command sent to a docked mower is what makes the cloud status stick.
+
 ### Times outside the preferred window
 
 When the planner confirms a time outside the preferred window, the notification says why, for example `Godzina poza oknem 09:00–12:00, bo w oknie prognoza wskazuje: rosa.` Possible reasons are rain, wet grass after rain, dew, a temperature outside the allowed range, a forecast that is too short or weather getting worse during mowing. Other reasons are that the window comes before the growth threshold, the minimum gap or the drying time is reached, or that a weekday or daylight limit applies.

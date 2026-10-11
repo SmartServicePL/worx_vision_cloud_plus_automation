@@ -44,6 +44,10 @@ blueprint:
     gubi koszenia: automatyzacja przejmuje trwający etap (krawędzie albo zwykłe
     koszenie), czeka na jego koniec i zapisuje koszenie, zamiast planować
     kolejne tego samego dnia.
+    Gdy chmura Worx utknie w stanie koszenia albo powrotu, choć robot od 5 minut
+    stoi przy stacji (RTK), automatyzacja wysyła minutę koszenia i powrót do bazy,
+    żeby robot przesłał aktualny stan (najwyżej raz na 2 godziny, z powiadomieniem).
+    Polecenie powrotu nigdy nie trafia do robota, który stoi w bazie.
 
     Typ robota:
     - Worx Vision / RTK sam kończy koszenie według mapy lub strefy. Użytkownik
@@ -647,6 +651,10 @@ mode: parallel
 max: 10
 max_exceeded: silent
 
+# Zmienne dostępne w wyzwalaczach (zwykłe zmienne są liczone dopiero po wyzwoleniu).
+trigger_variables:
+  stuck_mower_entity: !input mower_entity
+
 triggers:
   - trigger: time
     id: update_growth
@@ -672,6 +680,13 @@ triggers:
     entity_id: !input garden_sensors
     from: "off"
     to: "on"
+  # Robot stoi przy stacji (RTK), a chmura Worx od 5 minut pokazuje koszenie albo powrót.
+  - trigger: template
+    id: stuck_at_station
+    value_template: >-
+      {{ states(stuck_mower_entity) in ['mowing', 'returning']
+         and state_attr(stuck_mower_entity, 'rtk_at_station') == true }}
+    for: "00:05:00"
   - trigger: homeassistant
     id: restart_recovery
     event: start
@@ -781,6 +796,8 @@ variables:
     {% else %}{{ custom_backup_start_time_value }}{% endif %}
   auto_planning_step_seconds: 900
   missed_start_grace_minutes: 30
+  # Bezpiecznik zawieszonego statusu: kolejna próba najwcześniej po tylu minutach.
+  stuck_fix_retry_minutes: 120
   weather_search_days: 4
   weather_forecast_max_items: 120
   dry_after_rain_hours: 3
@@ -1866,10 +1883,15 @@ actions:
                       and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                      or state_attr(mower_entity, 'rain_delay') == true }}
             then:
-              - action: lawn_mower.dock
-                continue_on_error: true
-                target:
-                  entity_id: !input mower_entity
+              - if:
+                  - condition: template
+                    alias: Robot wyjechał z bazy
+                    value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                then:
+                  - action: lawn_mower.dock
+                    continue_on_error: true
+                    target:
+                      entity_id: !input mower_entity
               - event: worx_smart_mowing_replan
                 event_data:
                   mower_entity: "{{ mower_entity }}"
@@ -1916,10 +1938,15 @@ actions:
                       and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                      or state_attr(mower_entity, 'rain_delay') == true }}
             then:
-              - action: lawn_mower.dock
-                continue_on_error: true
-                target:
-                  entity_id: !input mower_entity
+              - if:
+                  - condition: template
+                    alias: Robot wyjechał z bazy
+                    value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                then:
+                  - action: lawn_mower.dock
+                    continue_on_error: true
+                    target:
+                      entity_id: !input mower_entity
               - event: worx_smart_mowing_replan
                 event_data:
                   mower_entity: "{{ mower_entity }}"
@@ -2261,10 +2288,15 @@ actions:
                           and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                          or state_attr(mower_entity, 'rain_delay') == true }}
                 then:
-                  - action: lawn_mower.dock
-                    continue_on_error: true
-                    target:
-                      entity_id: !input mower_entity
+                  - if:
+                      - condition: template
+                        alias: Robot wyjechał z bazy
+                        value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                    then:
+                      - action: lawn_mower.dock
+                        continue_on_error: true
+                        target:
+                          entity_id: !input mower_entity
                   - event: worx_smart_mowing_replan
                     event_data:
                       mower_entity: "{{ mower_entity }}"
@@ -2312,10 +2344,15 @@ actions:
                           and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                          or state_attr(mower_entity, 'rain_delay') == true }}
                 then:
-                  - action: lawn_mower.dock
-                    continue_on_error: true
-                    target:
-                      entity_id: !input mower_entity
+                  - if:
+                      - condition: template
+                        alias: Robot wyjechał z bazy
+                        value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                    then:
+                      - action: lawn_mower.dock
+                        continue_on_error: true
+                        target:
+                          entity_id: !input mower_entity
                   - event: worx_smart_mowing_replan
                     event_data:
                       mower_entity: "{{ mower_entity }}"
@@ -2708,6 +2745,65 @@ actions:
                     {% set total = ((((manual_mow_finished_ts | float) - (manual_mow_started_ts | float)) / 60) | round(0)) | int %}
                     {% if total >= 60 %}{{ total // 60 }} godz. {{ total % 60 }} min{% else %}{{ total }} min{% endif %}
                   min_delay_minutes: 0
+      - alias: Bezpiecznik - robot stoi w bazie, a chmura Worx pokazuje aktywny stan
+        conditions:
+          - condition: template
+            value_template: >-
+              {% set stuck = states(mower_entity) in ['mowing', 'returning']
+                 and state_attr(mower_entity, 'rtk_at_station') == true %}
+              {% set minutes = (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed, 0)) / 60 %}
+              {% set retry = stuck_fix_retry_minutes | int(120) %}
+              {{ stuck and (cycle_running | string | lower) != 'true'
+                 and (trigger.id == 'stuck_at_station'
+                      or (trigger.id == 'start_due_check' and minutes >= retry and (minutes % retry) < 5)) }}
+        sequence:
+          - if:
+              - condition: template
+                alias: Teraz nie można ruszyć robota
+                value_template: >-
+                  {{ (rain_active_now | string | lower) == 'true'
+                     or state_attr(mower_entity, 'rain_delay') == true
+                     or (daylight_only and (daylight_now | string | lower) != 'true')
+                     or (garden_check_enabled and (garden_occupied | string | lower) == 'true') }}
+            then:
+              - stop: Bezpiecznik odłożony - deszcz, ciemno albo ktoś w ogrodzie; kolejna próba za 2 godziny.
+          - variables:
+              stuck_state_label: >-
+                {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }} (status {{ state_attr(mower_entity, 'status_id') }}{{ ': ' ~ state_attr(mower_entity, 'status_description') if state_attr(mower_entity, 'status_description') else '' }})
+          - action: worx_vision_cloud.start_one_time_mowing
+            alias: Krótki wyjazd, żeby robot wysłał aktualny stan
+            continue_on_error: true
+            data:
+              entity_id: !input mower_entity
+              runtime: 1
+              edge_cut: false
+              zones: []
+          - delay: "00:01:00"
+          - if:
+              - condition: template
+                alias: Robot wyjechał z bazy
+                value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+            then:
+              - action: lawn_mower.dock
+                continue_on_error: true
+                target:
+                  entity_id: !input mower_entity
+          - wait_template: "{{ is_state(mower_entity, 'docked') }}"
+            alias: Poczekaj na potwierdzenie bazy
+            timeout: "00:10:00"
+            continue_on_timeout: true
+          - variables:
+              tytul: >-
+                {{ 'Worx: status robota poprawiony' if is_state(mower_entity, 'docked') else 'Worx: robot nie potwierdził powrotu do bazy' }}
+              tresc: |-
+                Chmura Worx pokazywała stan {{ stuck_state_label | trim }}, choć robot stał w bazie.
+                {% if is_state(mower_entity, 'docked') %}Robot wyjechał na minutę i wrócił, status jest znowu poprawny.{% else %}Po krótkim wyjeździe robot nie potwierdził powrotu do bazy (stan: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}). Sprawdź robota w aplikacji WORX.{% endif %}
+          - action: persistent_notification.create
+            data:
+              notification_id: "{{ notification_id }}"
+              title: "{{ tytul }}"
+              message: "{{ tresc }}"
+          - sequence: !input notify_actions
       - alias: Przejmij trwający cykl po restarcie Home Assistant
         conditions:
           - condition: template

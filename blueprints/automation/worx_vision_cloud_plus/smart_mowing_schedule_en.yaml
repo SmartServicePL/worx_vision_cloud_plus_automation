@@ -44,6 +44,10 @@ blueprint:
     lose the mowing: the automation takes over the running stage (edge pass or normal
     mowing), waits for it to finish and records the mowing instead of planning
     another one on the same day.
+    When the Worx cloud is stuck in a mowing or returning state although the mower has
+    stood at the station (RTK) for 5 minutes, the automation sends one minute of mowing and a return
+    to the dock so the mower reports its real state (at most once every 2 hours, with a notification).
+    A return command is never sent to a mower that is already docked.
 
     Mower type:
     - Worx Vision / RTK finishes mowing on its own based on the map or zone. You
@@ -647,6 +651,10 @@ mode: parallel
 max: 10
 max_exceeded: silent
 
+# Variables available to triggers (regular variables are only evaluated after a trigger).
+trigger_variables:
+  stuck_mower_entity: !input mower_entity
+
 triggers:
   - trigger: time
     id: update_growth
@@ -672,6 +680,13 @@ triggers:
     entity_id: !input garden_sensors
     from: "off"
     to: "on"
+  # The mower stands at the station (RTK) while the Worx cloud has shown mowing or returning for 5 minutes.
+  - trigger: template
+    id: stuck_at_station
+    value_template: >-
+      {{ states(stuck_mower_entity) in ['mowing', 'returning']
+         and state_attr(stuck_mower_entity, 'rtk_at_station') == true }}
+    for: "00:05:00"
   - trigger: homeassistant
     id: restart_recovery
     event: start
@@ -781,6 +796,8 @@ variables:
     {% else %}{{ custom_backup_start_time_value }}{% endif %}
   auto_planning_step_seconds: 900
   missed_start_grace_minutes: 30
+  # Stuck status safeguard: the next attempt no earlier than after this many minutes.
+  stuck_fix_retry_minutes: 120
   weather_search_days: 4
   weather_forecast_max_items: 120
   dry_after_rain_hours: 3
@@ -1866,10 +1883,15 @@ actions:
                       and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                      or state_attr(mower_entity, 'rain_delay') == true }}
             then:
-              - action: lawn_mower.dock
-                continue_on_error: true
-                target:
-                  entity_id: !input mower_entity
+              - if:
+                  - condition: template
+                    alias: Mower has left the dock
+                    value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                then:
+                  - action: lawn_mower.dock
+                    continue_on_error: true
+                    target:
+                      entity_id: !input mower_entity
               - event: worx_smart_mowing_replan
                 event_data:
                   mower_entity: "{{ mower_entity }}"
@@ -1916,10 +1938,15 @@ actions:
                       and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                      or state_attr(mower_entity, 'rain_delay') == true }}
             then:
-              - action: lawn_mower.dock
-                continue_on_error: true
-                target:
-                  entity_id: !input mower_entity
+              - if:
+                  - condition: template
+                    alias: Mower has left the dock
+                    value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                then:
+                  - action: lawn_mower.dock
+                    continue_on_error: true
+                    target:
+                      entity_id: !input mower_entity
               - event: worx_smart_mowing_replan
                 event_data:
                   mower_entity: "{{ mower_entity }}"
@@ -2261,10 +2288,15 @@ actions:
                           and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                          or state_attr(mower_entity, 'rain_delay') == true }}
                 then:
-                  - action: lawn_mower.dock
-                    continue_on_error: true
-                    target:
-                      entity_id: !input mower_entity
+                  - if:
+                      - condition: template
+                        alias: Mower has left the dock
+                        value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                    then:
+                      - action: lawn_mower.dock
+                        continue_on_error: true
+                        target:
+                          entity_id: !input mower_entity
                   - event: worx_smart_mowing_replan
                     event_data:
                       mower_entity: "{{ mower_entity }}"
@@ -2312,10 +2344,15 @@ actions:
                           and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                          or state_attr(mower_entity, 'rain_delay') == true }}
                 then:
-                  - action: lawn_mower.dock
-                    continue_on_error: true
-                    target:
-                      entity_id: !input mower_entity
+                  - if:
+                      - condition: template
+                        alias: Mower has left the dock
+                        value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                    then:
+                      - action: lawn_mower.dock
+                        continue_on_error: true
+                        target:
+                          entity_id: !input mower_entity
                   - event: worx_smart_mowing_replan
                     event_data:
                       mower_entity: "{{ mower_entity }}"
@@ -2708,6 +2745,65 @@ actions:
                     {% set total = ((((manual_mow_finished_ts | float) - (manual_mow_started_ts | float)) / 60) | round(0)) | int %}
                     {% if total >= 60 %}{{ total // 60 }} h {{ total % 60 }} min{% else %}{{ total }} min{% endif %}
                   min_delay_minutes: 0
+      - alias: Safeguard - mower is docked but the Worx cloud shows an active state
+        conditions:
+          - condition: template
+            value_template: >-
+              {% set stuck = states(mower_entity) in ['mowing', 'returning']
+                 and state_attr(mower_entity, 'rtk_at_station') == true %}
+              {% set minutes = (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed, 0)) / 60 %}
+              {% set retry = stuck_fix_retry_minutes | int(120) %}
+              {{ stuck and (cycle_running | string | lower) != 'true'
+                 and (trigger.id == 'stuck_at_station'
+                      or (trigger.id == 'start_due_check' and minutes >= retry and (minutes % retry) < 5)) }}
+        sequence:
+          - if:
+              - condition: template
+                alias: The mower cannot be moved now
+                value_template: >-
+                  {{ (rain_active_now | string | lower) == 'true'
+                     or state_attr(mower_entity, 'rain_delay') == true
+                     or (daylight_only and (daylight_now | string | lower) != 'true')
+                     or (garden_check_enabled and (garden_occupied | string | lower) == 'true') }}
+            then:
+              - stop: Safeguard postponed - rain, darkness or someone in the garden; next attempt in 2 hours.
+          - variables:
+              stuck_state_label: >-
+                {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }} (status {{ state_attr(mower_entity, 'status_id') }}{{ ': ' ~ state_attr(mower_entity, 'status_description') if state_attr(mower_entity, 'status_description') else '' }})
+          - action: worx_vision_cloud.start_one_time_mowing
+            alias: Short run so the mower reports its real state
+            continue_on_error: true
+            data:
+              entity_id: !input mower_entity
+              runtime: 1
+              edge_cut: false
+              zones: []
+          - delay: "00:01:00"
+          - if:
+              - condition: template
+                alias: Mower has left the dock
+                value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+            then:
+              - action: lawn_mower.dock
+                continue_on_error: true
+                target:
+                  entity_id: !input mower_entity
+          - wait_template: "{{ is_state(mower_entity, 'docked') }}"
+            alias: Wait for the dock to be confirmed
+            timeout: "00:10:00"
+            continue_on_timeout: true
+          - variables:
+              tytul: >-
+                {{ 'Worx: mower status corrected' if is_state(mower_entity, 'docked') else 'Worx: mower did not confirm the return to the dock' }}
+              tresc: |-
+                The Worx cloud showed the state {{ stuck_state_label | trim }} although the mower was docked.
+                {% if is_state(mower_entity, 'docked') %}The mower drove out for a minute and returned; the status is correct again.{% else %}After the short run the mower did not confirm the return to the dock (state: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}). Check the mower in the WORX app.{% endif %}
+          - action: persistent_notification.create
+            data:
+              notification_id: "{{ notification_id }}"
+              title: "{{ tytul }}"
+              message: "{{ tresc }}"
+          - sequence: !input notify_actions
       - alias: Take over a running cycle after a Home Assistant restart
         conditions:
           - condition: template

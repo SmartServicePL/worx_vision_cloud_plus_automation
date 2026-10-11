@@ -44,6 +44,10 @@ blueprint:
     verliert das Mähen nicht: Die Automatisierung übernimmt den laufenden Schritt (Kantenschnitt oder normales
     Mähen), wartet auf dessen Ende und speichert das Mähen, statt am selben Tag
     ein weiteres zu planen.
+    Hängt die Worx Cloud im Zustand Mähen oder Rückkehr fest, obwohl der Mähroboter seit
+    5 Minuten an der Station steht (RTK), sendet die Automatisierung eine Minute Mähen und die Rückkehr,
+    damit der Mähroboter seinen aktuellen Zustand meldet (höchstens alle 2 Stunden, mit Benachrichtigung).
+    Ein Rückkehrbefehl wird nie an einen Mähroboter gesendet, der in der Ladestation steht.
 
     Mährobotertyp:
     - Worx Vision / RTK beendet das Mähen selbst anhand der Karte oder Zone. Du
@@ -647,6 +651,10 @@ mode: parallel
 max: 10
 max_exceeded: silent
 
+# Variablen für Auslöser (normale Variablen werden erst nach dem Auslösen berechnet).
+trigger_variables:
+  stuck_mower_entity: !input mower_entity
+
 triggers:
   - trigger: time
     id: update_growth
@@ -672,6 +680,13 @@ triggers:
     entity_id: !input garden_sensors
     from: "off"
     to: "on"
+  # Der Mähroboter steht an der Station (RTK), die Worx Cloud zeigt seit 5 Minuten Mähen oder Rückkehr.
+  - trigger: template
+    id: stuck_at_station
+    value_template: >-
+      {{ states(stuck_mower_entity) in ['mowing', 'returning']
+         and state_attr(stuck_mower_entity, 'rtk_at_station') == true }}
+    for: "00:05:00"
   - trigger: homeassistant
     id: restart_recovery
     event: start
@@ -781,6 +796,8 @@ variables:
     {% else %}{{ custom_backup_start_time_value }}{% endif %}
   auto_planning_step_seconds: 900
   missed_start_grace_minutes: 30
+  # Schutz bei hängendem Status: nächster Versuch frühestens nach so vielen Minuten.
+  stuck_fix_retry_minutes: 120
   weather_search_days: 4
   weather_forecast_max_items: 120
   dry_after_rain_hours: 3
@@ -1866,10 +1883,15 @@ actions:
                       and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                      or state_attr(mower_entity, 'rain_delay') == true }}
             then:
-              - action: lawn_mower.dock
-                continue_on_error: true
-                target:
-                  entity_id: !input mower_entity
+              - if:
+                  - condition: template
+                    alias: Mähroboter hat die Ladestation verlassen
+                    value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                then:
+                  - action: lawn_mower.dock
+                    continue_on_error: true
+                    target:
+                      entity_id: !input mower_entity
               - event: worx_smart_mowing_replan
                 event_data:
                   mower_entity: "{{ mower_entity }}"
@@ -1916,10 +1938,15 @@ actions:
                       and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                      or state_attr(mower_entity, 'rain_delay') == true }}
             then:
-              - action: lawn_mower.dock
-                continue_on_error: true
-                target:
-                  entity_id: !input mower_entity
+              - if:
+                  - condition: template
+                    alias: Mähroboter hat die Ladestation verlassen
+                    value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                then:
+                  - action: lawn_mower.dock
+                    continue_on_error: true
+                    target:
+                      entity_id: !input mower_entity
               - event: worx_smart_mowing_replan
                 event_data:
                   mower_entity: "{{ mower_entity }}"
@@ -2261,10 +2288,15 @@ actions:
                           and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                          or state_attr(mower_entity, 'rain_delay') == true }}
                 then:
-                  - action: lawn_mower.dock
-                    continue_on_error: true
-                    target:
-                      entity_id: !input mower_entity
+                  - if:
+                      - condition: template
+                        alias: Mähroboter hat die Ladestation verlassen
+                        value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                    then:
+                      - action: lawn_mower.dock
+                        continue_on_error: true
+                        target:
+                          entity_id: !input mower_entity
                   - event: worx_smart_mowing_replan
                     event_data:
                       mower_entity: "{{ mower_entity }}"
@@ -2312,10 +2344,15 @@ actions:
                           and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                          or state_attr(mower_entity, 'rain_delay') == true }}
                 then:
-                  - action: lawn_mower.dock
-                    continue_on_error: true
-                    target:
-                      entity_id: !input mower_entity
+                  - if:
+                      - condition: template
+                        alias: Mähroboter hat die Ladestation verlassen
+                        value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+                    then:
+                      - action: lawn_mower.dock
+                        continue_on_error: true
+                        target:
+                          entity_id: !input mower_entity
                   - event: worx_smart_mowing_replan
                     event_data:
                       mower_entity: "{{ mower_entity }}"
@@ -2708,6 +2745,65 @@ actions:
                     {% set total = ((((manual_mow_finished_ts | float) - (manual_mow_started_ts | float)) / 60) | round(0)) | int %}
                     {% if total >= 60 %}{{ total // 60 }} Std. {{ total % 60 }} Min.{% else %}{{ total }} Min.{% endif %}
                   min_delay_minutes: 0
+      - alias: Schutz - Mähroboter steht in der Ladestation, die Worx Cloud zeigt einen aktiven Zustand
+        conditions:
+          - condition: template
+            value_template: >-
+              {% set stuck = states(mower_entity) in ['mowing', 'returning']
+                 and state_attr(mower_entity, 'rtk_at_station') == true %}
+              {% set minutes = (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed, 0)) / 60 %}
+              {% set retry = stuck_fix_retry_minutes | int(120) %}
+              {{ stuck and (cycle_running | string | lower) != 'true'
+                 and (trigger.id == 'stuck_at_station'
+                      or (trigger.id == 'start_due_check' and minutes >= retry and (minutes % retry) < 5)) }}
+        sequence:
+          - if:
+              - condition: template
+                alias: Mähroboter darf jetzt nicht bewegt werden
+                value_template: >-
+                  {{ (rain_active_now | string | lower) == 'true'
+                     or state_attr(mower_entity, 'rain_delay') == true
+                     or (daylight_only and (daylight_now | string | lower) != 'true')
+                     or (garden_check_enabled and (garden_occupied | string | lower) == 'true') }}
+            then:
+              - stop: Schutz verschoben - Regen, Dunkelheit oder jemand im Garten; nächster Versuch in 2 Stunden.
+          - variables:
+              stuck_state_label: >-
+                {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }} (Status {{ state_attr(mower_entity, 'status_id') }}{{ ': ' ~ state_attr(mower_entity, 'status_description') if state_attr(mower_entity, 'status_description') else '' }})
+          - action: worx_vision_cloud.start_one_time_mowing
+            alias: Kurze Fahrt, damit der Mähroboter seinen Zustand meldet
+            continue_on_error: true
+            data:
+              entity_id: !input mower_entity
+              runtime: 1
+              edge_cut: false
+              zones: []
+          - delay: "00:01:00"
+          - if:
+              - condition: template
+                alias: Mähroboter hat die Ladestation verlassen
+                value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown'] }}"
+            then:
+              - action: lawn_mower.dock
+                continue_on_error: true
+                target:
+                  entity_id: !input mower_entity
+          - wait_template: "{{ is_state(mower_entity, 'docked') }}"
+            alias: Auf Bestätigung der Ladestation warten
+            timeout: "00:10:00"
+            continue_on_timeout: true
+          - variables:
+              tytul: >-
+                {{ 'Worx: Status des Mähroboters korrigiert' if is_state(mower_entity, 'docked') else 'Worx: Rückkehr zur Ladestation nicht bestätigt' }}
+              tresc: |-
+                Die Worx Cloud zeigte den Zustand {{ stuck_state_label | trim }}, obwohl der Mähroboter in der Ladestation stand.
+                {% if is_state(mower_entity, 'docked') %}Der Mähroboter ist eine Minute gefahren und zurückgekehrt; der Status stimmt wieder.{% else %}Nach der kurzen Fahrt hat der Mähroboter die Rückkehr zur Ladestation nicht bestätigt (Zustand: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}). Prüfe den Mähroboter in der WORX-App.{% endif %}
+          - action: persistent_notification.create
+            data:
+              notification_id: "{{ notification_id }}"
+              title: "{{ tytul }}"
+              message: "{{ tresc }}"
+          - sequence: !input notify_actions
       - alias: Laufenden Zyklus nach Neustart von Home Assistant übernehmen
         conditions:
           - condition: template

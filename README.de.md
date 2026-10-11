@@ -45,6 +45,7 @@ Sprache später wechseln: die andere Datei importieren, die Automatisierung öff
 - Erkennt in der WORX-App gestartetes Mähen und setzt das Graswachstum erst zurück, wenn der ganze Zyklus bestätigt ist.
 - Wertet einen Lauf, den der Mähroboter nach einem kurzen Fehler abbricht und zur Ladestation zurückkehrt, als unterbrochen statt als beendet.
 - Übernimmt einen laufenden Zyklus nach einem Neustart von Home Assistant oder dem Neuladen der Automatisierungen, sodass das Mähen einmal erfasst und nicht am selben Tag ein zweites Mal gestartet wird.
+- Behebt einen hängenden Cloud-Status: Zeigt die Worx Cloud weiter Mähen oder Rückkehr (zum Beispiel 104 `searching home`), obwohl RTK den Mähroboter seit fünf Minuten an der Station sieht, sendet der Blueprint eine Minute Mähen und die Rückkehr zur Ladestation, damit der Mähroboter seinen echten Zustand meldet – höchstens alle zwei Stunden und mit Benachrichtigung. Ein Rückkehrbefehl wird nie an einen Mähroboter in der Ladestation gesendet.
 - Optional und standardmäßig aus: Mähen nur an gewählten Wochentagen, nur bei Tageslicht (Igelschutz), Pause, wenn jemand im Garten ist, und eigene Benachrichtigungsaktionen für das Handy.
 - Prüft vor dem normalen Mähen nach dem Kantenschnitt erneut Messwerte, die Regenverzögerung der Worx Cloud und die stündliche Vorhersage.
 

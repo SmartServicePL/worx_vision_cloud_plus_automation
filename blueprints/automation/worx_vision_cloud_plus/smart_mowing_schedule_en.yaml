@@ -1,0 +1,2847 @@
+blueprint:
+  name: Worx Vision Cloud PLUS - smart mowing schedule
+  description: |
+    Smart mowing schedule for Worx robot mowers, controlled from Home
+    Assistant instead of a fixed schedule in the WORX app.
+
+    What the automation does:
+    - estimates daily grass growth with the Growth Potential (GP) model based on
+      conditions over the whole day (average temperature, maximum UV and rainfall from the forecast
+      for the next 24 hours), not a single reading at dawn,
+    - takes into account weather, rainfall, temperature, sun, optional soil moisture,
+      irrigation and fertilization,
+    - prefers the selected time window, but looks for a safe time outside it if needed,
+    - avoids rain, a freshly wet lawn and temperatures outside the set range,
+    - detects dew from the difference between air temperature and dew point: grass
+      is considered dry when the air is at least 2.5 °C warmer than the dew point,
+    - sends a notification right away when the mower gets trapped or reports another error during a cycle,
+    - prefers frequent, light robot mowing over waiting for tall grass.
+
+    Weather source:
+    - your own weather station or local sensors provide real measurements,
+    - the recommended MeteoFusion HA integration provides a locally corrected hourly
+      forecast, current rainfall and a forecast quality rating,
+    - you can also use another weather entity, e.g. Tomorrow.io,
+    - all mowing times (daily plan, retry after a block or interruption,
+      next time after a finished mowing) are calculated by the same planner, so notifications
+      always show the same, current time,
+    - a time planned for today is not moved later by periodic forecast
+      changes; a time on later days is re-evaluated at the daily recalculation,
+    - at start time real sensors take priority: in dry weather
+      the mower starts, and when actual rain is detected it returns to the dock,
+    - after rain the automation waits for the grass to dry, counted from the moment
+      the rain sensor switched to dry,
+    - without a forecast the automation uses the selected window and checks actual
+      conditions right before the start.
+
+    How a mowing cycle works:
+    1. Home Assistant starts a separate edge cut.
+    2. The automation waits for the mower to return to the dock.
+    3. The mower charges its battery to at least 80%.
+    4. Temperature, rain and humidity are checked again.
+    5. Only then does normal one-time mowing start.
+    Every interruption of the cycle sets a new mowing time counted from the interruption.
+    Restarting Home Assistant or reloading automations during a cycle does not
+    lose the mowing: the automation takes over the running stage (edge pass or normal
+    mowing), waits for it to finish and records the mowing instead of planning
+    another one on the same day.
+
+    Mower type:
+    - Worx Vision / RTK finishes mowing on its own based on the map or zone. You
+      do not need to set a full mowing duration. Returning with a low battery, charging
+      and automatic resume are treated as one cycle.
+    - Older Worx mowers with a boundary wire still use a calculated
+      run time, because their one-time mowing mode requires it.
+
+    Operating modes:
+    - automatic mode picks the best time from the hourly forecast,
+    - when it is too hot, it looks for a cooler time on the same
+      day; with FiatLux it can also use night hours until 05:00,
+    - fixed time mode works like a classic schedule with a second start attempt,
+    - night mowing 22:00-05:00 is available only after confirming the accessory
+      FiatLux.
+
+    Extra options (off by default):
+    - mowing only on selected days of the week,
+    - mowing only in daylight, with a margin of minutes after sunrise and before sunset
+      (protects hedgehogs and other small animals that forage after dark),
+    - pausing mowing when someone is in the garden (motion sensors, gate,
+      a "kids/dogs in the garden" switch); the mower returns to the dock or stops,
+      and the cycle counts as interrupted,
+    - phone notifications or other actions (e.g. notify.mobile_app_...).
+
+    Notifications:
+    - after the daily grass growth recalculation,
+    - after a start is postponed,
+    - after a mowing cycle starts,
+    - after a cycle finishes or is interrupted following an actual start.
+    When the forecast confirms good conditions, the notification shows "Mowing time".
+    Otherwise it shows "Next check" and a short reason.
+
+    Requirements:
+    - Worx Vision Cloud PLUS integration 1.3.1 or newer,
+    - three Home Assistant helpers: grass growth, last mowing and next
+      planned mowing,
+    - the mowing schedule in the WORX app turned off.
+  domain: automation
+  author: Smart Service
+  homeassistant:
+    min_version: 2025.4.0
+  source_url: https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule_en.yaml
+  input:
+    mower_section:
+      name: Mower
+      icon: mdi:robot-mower
+      input:
+        mower_entity:
+          name: Mower
+          description: The lawn_mower entity from the Worx Vision Cloud PLUS integration.
+          selector:
+            entity:
+              filter:
+                - domain: lawn_mower
+        battery_sensor:
+          name: Battery
+          description: Mower battery percentage sensor.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+        rain_binary_sensor:
+          name: Current rain state
+          description: Binary sensor that shows whether it is raining right now. It can come from the mower or a local weather station. When available, its real measurement takes priority over the rain forecast. The drying time (3 h, 6 h after heavy rain) is counted from the moment the sensor switches to dry, only when at least 0.2 mm of rain has been measured since midnight.
+          selector:
+            entity:
+              filter:
+                - domain: binary_sensor
+    weather_section:
+      name: Weather
+      icon: mdi:weather-partly-rainy
+      input:
+        temperature_source_entity:
+          name: Temperature
+          description: Outdoor temperature sensor or a weather entity with a temperature attribute. Used to check start conditions. Daily grass growth is calculated from the average temperature of the hourly forecast for the next 24 hours; without a forecast this reading is used, so a daily average sensor (e.g. the statistics integration) is recommended in that case.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                - domain: weather
+        rain_source_entity:
+          name: Measured rainfall
+          description: Rainfall total sensor for the current day or the last 24 hours, or a weather entity. Do not select an instantaneous rain rate. With MeteoFusion HA the rainfall total is read automatically.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                - domain: weather
+        forecast_weather_entity:
+          name: Hourly forecast (optional)
+          description: A weather entity from the MeteoFusion HA integration is recommended. The automation picks a specific dry hour with a safe temperature from its forecast and uses it to calculate grass growth conditions for the next 24 hours. Regular weather entities, e.g. Tomorrow.io, are also supported. Without a forecast the selected window is used and current conditions are checked at start time.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: weather
+        outdoor_humidity_sensor:
+          name: Air humidity (optional)
+          description: Local outdoor humidity sensor. Together with the temperature it is used to calculate the dew point; a start is possible when the air is at least 2.5 °C warmer than the dew point, i.e. when the dew has evaporated. Without this sensor the automation uses the humidity from the weather entity, if available.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+        sunlight_source_entity:
+          name: Sunlight / UV
+          description: UV/sunlight sensor or a weather entity with a uv_index attribute. Daily growth uses the maximum UV from the hourly forecast for the next 24 hours. When the forecast has no UV, this reading is used, and a night reading (below 1) is replaced with a typical value for the season.
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+                - domain: weather
+        soil_moisture_sensor:
+          name: Soil moisture (optional)
+          description: You can leave this empty. The automation will then calculate a virtual soil moisture from the weather.
+          default: ""
+          selector:
+            entity:
+              filter:
+                - domain: sensor
+    helpers_section:
+      name: Helpers
+      icon: mdi:database-clock
+      input:
+        growth_helper:
+          name: Grass growth
+          description: input_number helper that stores the estimated grass growth since the last full mowing.
+          selector:
+            entity:
+              filter:
+                - domain: input_number
+        last_mow_helper:
+          name: Last mowing
+          description: input_datetime helper updated after a full mowing cycle.
+          selector:
+            entity:
+              filter:
+                - domain: input_datetime
+        next_mow_helper:
+          name: Next mowing
+          description: input_datetime helper where the automation stores the expected time of the next mowing.
+          selector:
+            entity:
+              filter:
+                - domain: input_datetime
+    simple_settings_section:
+      name: Basic settings
+      icon: mdi:tune-variant
+      input:
+        mower_cycle_type:
+          name: Mower type
+          description: With Worx Vision / RTK the mower finishes mowing on its own based on the map. For older mowers with a boundary wire the automation uses a calculated run time.
+          default: vision_rtk
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - label: Worx Vision / RTK
+                  value: vision_rtk
+                - label: Older Worx with boundary wire
+                  value: wired_timed
+        mower_model:
+          name: Mower model
+          description: Select a WORX Vision / Vision Cloud model, or manual mode for another model.
+          default: custom
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - label: Manual / other model
+                  value: custom
+                - label: Vision AI S250 WR202E - 250 m2
+                  value: wr202e_250
+                - label: Vision AI M600 WR206E - 600 m2
+                  value: wr206e_600
+                - label: Vision AI M800 WR208E - 800 m2
+                  value: wr208e_800
+                - label: Vision AI L1300 WR213E - 1300 m2
+                  value: wr213e_1300
+                - label: Vision AI L1600 WR216E - 1600 m2
+                  value: wr216e_1600
+                - label: Vision AI WR220 - 1/2 acre
+                  value: wr220_2023
+                - label: Vision Cloud 300 WR303E - 300 m2
+                  value: wr303e_300
+                - label: Vision Cloud 500 WR305E - 500 m2
+                  value: wr305e_500
+                - label: Vision Cloud 650 WR365E - 650 m2
+                  value: wr365e_650
+                - label: Vision Cloud 650 WR365E.1 Cut-to-Zero - 650 m2
+                  value: wr365e1_650
+                - label: Vision Cloud 800 WR308E - 800 m2
+                  value: wr308e_800
+                - label: Vision Cloud 1200 WR312E - 1200 m2
+                  value: wr312e_1200
+                - label: Vision Cloud 1800 WR318E - 1800 m2
+                  value: wr318e_1800
+                - label: Vision Cloud 3000 WR330E - 3000 m2
+                  value: wr330e_3000
+                - label: Vision Cloud 1/4 acre WR310/WR310.1
+                  value: wr310_1012
+                - label: Vision Cloud 1/2 acre WR320/WR320.1
+                  value: wr320_2023
+                - label: Vision Cloud 1 acre WR340
+                  value: wr340_us_4047
+                - label: Vision Cloud 4WD 600 WR340E - 600 m2
+                  value: wr340e_600
+                - label: Vision Cloud 4WD 1000 WR341E - 1000 m2
+                  value: wr341e_1000
+                - label: Vision Cloud 4WD 2000 WR342E - 2000 m2
+                  value: wr342e_2000
+                - label: Vision Cloud 4WD 4000 WR344E - 4000 m2
+                  value: wr344e_4000
+                - label: Vision Cloud 4WD 1/4 acre WR341/WR341.1
+                  value: wr341_us_1012
+                - label: Vision Cloud 4WD 1 acre WR344
+                  value: wr344_us_4047
+        lawn_area_m2:
+          name: Lawn area
+          description: Mowable lawn area in square meters.
+          default: 500
+          selector:
+            number:
+              min: 20
+              max: 5000
+              step: 10
+              unit_of_measurement: m2
+              mode: box
+        growth_threshold_mode:
+          name: When to start mowing
+          description: Automatic mode picks a low start threshold suited to a robot mower. The 1/3 grass blade rule is treated only as a safety limit, not as a start threshold.
+          default: auto_cutting_height
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - label: Automatic for robot mower
+                  value: auto_cutting_height
+                - label: Manual growth threshold
+                  value: manual
+        cutting_height_mm:
+          name: Cutting height
+          description: Target grass height set on the mower. The automation uses it to choose a small start threshold and a safe mowing limit.
+          default: 40
+          selector:
+            number:
+              min: 20
+              max: 60
+              step: 1
+              unit_of_measurement: mm
+              mode: slider
+        planning_mode:
+          name: Time selection mode
+          description: Automatically picks the best time from the forecast, or sticks to a fixed time.
+          default: auto
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - label: Automatic from weather forecast
+                  value: auto
+                - label: Fixed time
+                  value: fixed
+        mowing_window_preset:
+          name: Preferred mowing window
+          description: The automation first looks for a safe time in this window. If the weather does not allow it, it may pick a time outside the window on the same day. The "Custom hours" option uses the hours set below.
+          default: before_noon
+          selector:
+            select:
+              mode: dropdown
+              options:
+                - label: Morning (07:00 - 10:00)
+                  value: morning
+                - label: Late morning (09:00 - 12:00)
+                  value: before_noon
+                - label: Midday (11:00 - 14:00)
+                  value: noon
+                - label: Afternoon (14:00 - 17:00)
+                  value: afternoon
+                - label: Evening (17:00 - 20:00)
+                  value: evening
+                - label: Night (22:00 - 05:00)
+                  value: night
+                - label: Custom hours
+                  value: custom
+        fiatlux_installed:
+          name: Is the FiatLux accessory installed on the mower?
+          description: Enable only if the mower has FiatLux lights. Required for the 22:00-05:00 night window.
+          default: false
+          selector:
+            boolean:
+        primary_start_time:
+          name: Custom window start
+          description: Used with the "Custom hours" option. In fixed time mode this is the main start.
+          default: "10:00:00"
+          selector:
+            time:
+        backup_start_time:
+          name: Custom window end
+          description: Used with the "Custom hours" option. In fixed time mode this is the second attempt.
+          default: "16:30:00"
+          selector:
+            time:
+        automatic_irrigation_enabled:
+          name: Automatic irrigation
+          description: Enable if the lawn is regularly watered by automatic irrigation.
+          default: false
+          selector:
+            boolean:
+        fertilization_enabled:
+          name: Fertilized lawn
+          description: Enable if the lawn is fertilized regularly.
+          default: false
+          selector:
+            boolean:
+    advanced_growth_section:
+      name: Advanced - grass growth
+      icon: mdi:sprout
+      collapsed: true
+      input:
+        growth_threshold_mm:
+          name: Manual mowing start threshold
+          description: Used only when "When to start mowing" is set to "Manual growth threshold".
+          default: 3
+          selector:
+            number:
+              min: 1
+              max: 12
+              step: 0.5
+              unit_of_measurement: mm
+              mode: slider
+        high_growth_threshold_mm:
+          name: Heavy mowing threshold
+          description: In automatic mode it is calculated from the start threshold and the 1/3 cutting height limit. This slider only works with the manual growth threshold.
+          default: 6
+          selector:
+            number:
+              min: 2
+              max: 25
+              step: 0.5
+              unit_of_measurement: mm
+              mode: slider
+        irrigation_growth_adjustment_percent:
+          name: Growth adjustment for irrigation
+          description: Used only when automatic irrigation is enabled.
+          default: 140
+          selector:
+            number:
+              min: 100
+              max: 220
+              step: 5
+              unit_of_measurement: "%"
+              mode: slider
+        fertilization_growth_adjustment_percent:
+          name: Growth adjustment for fertilization
+          description: Used only when fertilization is enabled.
+          default: 125
+          selector:
+            number:
+              min: 100
+              max: 180
+              step: 5
+              unit_of_measurement: "%"
+              mode: slider
+        min_days_between_mows:
+          name: Minimum gap between mowings
+          description: Protection against starting too often. A value of 1 day means the next calendar day, so the mower can mow every day when growth and weather allow.
+          default: 1
+          selector:
+            number:
+              min: 0
+              max: 7
+              step: 0.5
+              unit_of_measurement: d
+              mode: slider
+    advanced_runtime_section:
+      name: Advanced - older wired mowers
+      icon: mdi:timer-cog
+      collapsed: true
+      input:
+        mower_capacity_m2_per_hour:
+          name: Manual mower capacity
+          description: Used only with the "Older Worx with boundary wire" type and the "Manual / other model" model.
+          default: 80
+          selector:
+            number:
+              min: 20
+              max: 250
+              step: 5
+              unit_of_measurement: m2/h
+              mode: slider
+        model_capacity_adjustment_percent:
+          name: Model capacity adjustment
+          description: For older wired mowers, lets you adjust the calculated run time for narrow passages, many zones or a simple lawn.
+          default: 100
+          selector:
+            number:
+              min: 50
+              max: 150
+              step: 5
+              unit_of_measurement: "%"
+              mode: slider
+        min_runtime_minutes:
+          name: Minimum mowing time for a wired mower
+          default: 45
+          selector:
+            number:
+              min: 10
+              max: 180
+              step: 5
+              unit_of_measurement: min
+              mode: slider
+        max_runtime_minutes:
+          name: Maximum mowing time for a wired mower
+          default: 120
+          selector:
+            number:
+              min: 30
+              max: 120
+              step: 15
+              unit_of_measurement: min
+              mode: slider
+    advanced_safety_section:
+      name: Advanced - safety
+      icon: mdi:shield-check
+      collapsed: true
+      input:
+        growth_update_time:
+          name: Growth recalculation time
+          description: At this time the automation adds the daily grass growth and re-evaluates the mowing time with the current forecast.
+          default: "05:30:00"
+          selector:
+            time:
+        min_battery_percent:
+          name: Minimum battery to start
+          default: 45
+          selector:
+            number:
+              min: 10
+              max: 100
+              step: 5
+              unit_of_measurement: "%"
+              mode: slider
+        min_mowing_temperature_c:
+          name: Minimum mowing temperature
+          description: Below this temperature mowing is postponed to a warmer time.
+          default: 10
+          selector:
+            number:
+              min: 0
+              max: 20
+              step: 1
+              unit_of_measurement: "°C"
+              mode: slider
+        max_mowing_temperature_c:
+          name: Maximum mowing temperature
+          description: Above this temperature mowing is postponed to a cooler time.
+          default: 25
+          selector:
+            number:
+              min: 20
+              max: 40
+              step: 1
+              unit_of_measurement: "°C"
+              mode: slider
+        max_rain_24h_mm:
+          name: Heavy rain threshold
+          description: When this measured value is exceeded, the automation doubles the grass drying time. Rain by itself does not block mowing for the whole day.
+          default: 3
+          selector:
+            number:
+              min: 0
+              max: 30
+              step: 0.5
+              unit_of_measurement: mm
+              mode: slider
+        max_soil_moisture_percent:
+          name: Maximum soil moisture to start
+          description: "Set below 100% if soil moisture should block the start. By default soil moisture is only used to calculate grass growth."
+          default: 100
+          selector:
+            number:
+              min: 20
+              max: 100
+              step: 1
+              unit_of_measurement: "%"
+              mode: slider
+        mowing_start_confirm_timeout_minutes:
+          name: Maximum mowing start confirmation time
+          description: How many minutes the automation waits for the mower to leave the dock after a normal mowing or edge cut command.
+          default: 5
+          selector:
+            number:
+              min: 2
+              max: 20
+              step: 1
+              unit_of_measurement: min
+              mode: slider
+    extra_options_section:
+      name: Extra options (off by default)
+      icon: mdi:calendar-check
+      collapsed: true
+      input:
+        allowed_days_enabled:
+          name: Mow only on selected days
+          description: Off = the planner can pick any day of the week.
+          default: false
+          selector:
+            boolean:
+        allowed_days:
+          name: Mowing days
+          description: Used only when the option above is enabled.
+          default: [mon, tue, wed, thu, fri, sat, sun]
+          selector:
+            select:
+              multiple: true
+              options:
+                - label: Monday
+                  value: mon
+                - label: Tuesday
+                  value: tue
+                - label: Wednesday
+                  value: wed
+                - label: Thursday
+                  value: thu
+                - label: Friday
+                  value: fri
+                - label: Saturday
+                  value: sat
+                - label: Sunday
+                  value: sun
+        daylight_only:
+          name: Mow only in daylight
+          description: >-
+            Start only between sunrise and sunset (sun.sun entity), with the margin set below.
+            Recommended: hedgehogs and other small animals forage after dark. Takes priority over the FiatLux night window.
+          default: false
+          selector:
+            boolean:
+        daylight_margin_minutes:
+          name: Margin after sunrise and before sunset
+          description: Used only when "Mow only in daylight" is enabled.
+          default: 30
+          selector:
+            number:
+              min: 0
+              max: 120
+              step: 5
+              unit_of_measurement: min
+              mode: slider
+        garden_check_enabled:
+          name: Do not mow when someone is in the garden
+          description: >-
+            When any of the sensors below is "on", mowing does not start, and ongoing mowing
+            is interrupted and rescheduled (no earlier than 30 minutes later).
+          default: false
+          selector:
+            boolean:
+        garden_sensors:
+          name: Sensors for "someone in the garden"
+          description: Motion or presence sensors in the garden, a gate, a "kids/dogs in the garden" switch. State "on" = someone is there.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: binary_sensor
+                - domain: input_boolean
+        garden_reaction:
+          name: When someone enters the garden during mowing
+          default: dock
+          selector:
+            select:
+              options:
+                - label: Send the mower to the dock
+                  value: dock
+                - label: Stop the mower on the lawn
+                  value: pause
+    notifications_section:
+      name: Phone notifications (optional)
+      icon: mdi:cellphone-message
+      collapsed: true
+      input:
+        notify_actions:
+          name: Notification actions
+          description: >-
+            Run together with the Home Assistant notification, e.g. notify.mobile_app_phone.
+            Available variables: {{ tytul }} and {{ tresc }}. Empty = Home Assistant notification only.
+          default: []
+          selector:
+            action: {}
+        notify_daily_plan:
+          name: Also send the daily mowing plan
+          description: Off = only mowing start, postponement, interruption and completion are sent to the phone.
+          default: false
+          selector:
+            boolean:
+
+mode: parallel
+max: 10
+max_exceeded: silent
+
+triggers:
+  - trigger: time
+    id: update_growth
+    at: !input growth_update_time
+  - trigger: time
+    id: start_scheduled
+    at: !input next_mow_helper
+  - trigger: time_pattern
+    id: start_due_check
+    minutes: "/5"
+  - trigger: state
+    id: external_mowing_started
+    entity_id: !input mower_entity
+    to: mowing
+    for: "00:10:00"
+  - trigger: event
+    id: replan
+    event_type: worx_smart_mowing_replan
+    event_data:
+      mower_entity: !input mower_entity
+  - trigger: state
+    id: garden_entered
+    entity_id: !input garden_sensors
+    from: "off"
+    to: "on"
+  - trigger: homeassistant
+    id: restart_recovery
+    event: start
+  - trigger: event
+    id: restart_recovery
+    event_type: automation_reloaded
+
+variables:
+  mower_entity: !input mower_entity
+  battery_sensor: !input battery_sensor
+  rain_binary_sensor: !input rain_binary_sensor
+  temperature_source_entity: !input temperature_source_entity
+  rain_source_entity: !input rain_source_entity
+  forecast_weather_entity_input: !input forecast_weather_entity
+  outdoor_humidity_sensor: !input outdoor_humidity_sensor
+  soil_moisture_sensor: !input soil_moisture_sensor
+  sunlight_source_entity: !input sunlight_source_entity
+  growth_helper: !input growth_helper
+  last_mow_helper: !input last_mow_helper
+  next_mow_helper: !input next_mow_helper
+  allowed_days_enabled: !input allowed_days_enabled
+  allowed_days: !input allowed_days
+  daylight_only: !input daylight_only
+  daylight_margin_minutes: !input daylight_margin_minutes
+  garden_check_enabled: !input garden_check_enabled
+  garden_sensors: !input garden_sensors
+  garden_reaction: !input garden_reaction
+  notify_daily_plan: !input notify_daily_plan
+  # Sunrise and sunset as seconds since midnight (local time) from sun.sun; -1 = no data.
+  # For planning later days the times from today are enough: the shift of a few minutes per day
+  # is smaller than the margin, and the condition is checked again before the start.
+  sun_rise_s: >-
+    {% set r = state_attr('sun.sun', 'next_rising') %}
+    {% if r %}{% set l = as_local(as_datetime(r)) %}{{ l.hour * 3600 + l.minute * 60 }}{% else %}-1{% endif %}
+  sun_set_s: >-
+    {% set r = state_attr('sun.sun', 'next_setting') %}
+    {% if r %}{% set l = as_local(as_datetime(r)) %}{{ l.hour * 3600 + l.minute * 60 }}{% else %}-1{% endif %}
+  daylight_now: >-
+    {% set sod = now().hour * 3600 + now().minute * 60 %}
+    {% set m = (daylight_margin_minutes | float(30)) * 60 %}
+    {{ (sun_rise_s | float(-1)) >= 0 and (sun_set_s | float(-1)) >= 0
+       and sod >= (sun_rise_s | float) + m and sod <= (sun_set_s | float) - m }}
+  garden_occupied: >-
+    {{ garden_sensors | select('is_state', 'on') | list | length > 0 }}
+  mower_cycle_type: !input mower_cycle_type
+  mower_model: !input mower_model
+  lawn_area_m2: !input lawn_area_m2
+  manual_mower_capacity_m2_per_hour: !input mower_capacity_m2_per_hour
+  model_capacity_adjustment_percent: !input model_capacity_adjustment_percent
+  growth_threshold_mode: !input growth_threshold_mode
+  cutting_height_mm: !input cutting_height_mm
+  manual_growth_threshold_mm: !input growth_threshold_mm
+  growth_threshold_mm: >-
+    {% if growth_threshold_mode == 'auto_cutting_height' %}
+      {% set height = cutting_height_mm | float(40) %}
+      {% set threshold = height * 0.075 %}
+      {% if threshold < 2 %}2{% elif threshold > 4.5 %}4.5{% else %}{{ threshold | round(1) }}{% endif %}
+    {% else %}
+      {{ manual_growth_threshold_mm }}
+    {% endif %}
+  automatic_irrigation_enabled: !input automatic_irrigation_enabled
+  irrigation_growth_adjustment_percent: !input irrigation_growth_adjustment_percent
+  fertilization_enabled: !input fertilization_enabled
+  fertilization_growth_adjustment_percent: !input fertilization_growth_adjustment_percent
+  manual_high_growth_threshold_mm: !input high_growth_threshold_mm
+  high_growth_threshold_mm: >-
+    {% if growth_threshold_mode == 'auto_cutting_height' %}
+      {% set safe_limit = (cutting_height_mm | float(40)) / 3 %}
+      {% set intensive = (growth_threshold_mm | float(3)) * 2 %}
+      {% if intensive > safe_limit %}{{ safe_limit | round(1) }}{% else %}{{ intensive | round(1) }}{% endif %}
+    {% else %}
+      {{ manual_high_growth_threshold_mm }}
+    {% endif %}
+  min_days_between_mows: !input min_days_between_mows
+  min_battery_percent: !input min_battery_percent
+  min_mowing_temperature_c: !input min_mowing_temperature_c
+  max_mowing_temperature_c: !input max_mowing_temperature_c
+  growth_update_time_value: !input growth_update_time
+  post_edge_battery_percent: 80
+  vision_completion_battery_percent: 95
+  vision_completion_stable_minutes: 15
+  max_rain_24h_mm: !input max_rain_24h_mm
+  max_soil_moisture_percent: !input max_soil_moisture_percent
+  min_runtime_minutes: !input min_runtime_minutes
+  max_runtime_minutes: !input max_runtime_minutes
+  mowing_start_confirm_timeout_minutes: !input mowing_start_confirm_timeout_minutes
+  planning_mode: !input planning_mode
+  mowing_window_preset: !input mowing_window_preset
+  fiatlux_installed: !input fiatlux_installed
+  custom_primary_start_time_value: !input primary_start_time
+  custom_backup_start_time_value: !input backup_start_time
+  primary_start_time_value: >-
+    {% if mowing_window_preset == 'morning' %}07:00:00
+    {% elif mowing_window_preset == 'before_noon' %}09:00:00
+    {% elif mowing_window_preset == 'noon' %}11:00:00
+    {% elif mowing_window_preset == 'afternoon' %}14:00:00
+    {% elif mowing_window_preset == 'evening' %}17:00:00
+    {% elif mowing_window_preset == 'night' %}22:00:00
+    {% else %}{{ custom_primary_start_time_value }}{% endif %}
+  backup_start_time_value: >-
+    {% if mowing_window_preset == 'morning' %}10:00:00
+    {% elif mowing_window_preset == 'before_noon' %}12:00:00
+    {% elif mowing_window_preset == 'noon' %}14:00:00
+    {% elif mowing_window_preset == 'afternoon' %}17:00:00
+    {% elif mowing_window_preset == 'evening' %}20:00:00
+    {% elif mowing_window_preset == 'night' %}05:00:00
+    {% else %}{{ custom_backup_start_time_value }}{% endif %}
+  auto_planning_step_seconds: 900
+  missed_start_grace_minutes: 30
+  weather_search_days: 4
+  weather_forecast_max_items: 120
+  dry_after_rain_hours: 3
+  forecast_dry_horizon_hours: 3
+  forecast_min_future_hours: 2
+  wet_grass_humidity_percent: 88
+  # Grass is considered dry only when the air is at least this many degrees
+  # warmer than the dew point. With a smaller difference the dew has not evaporated yet.
+  min_dew_point_spread_c: 2.5
+  # After this many minutes of continuous error state during a cycle the automation treats the mower as trapped.
+  mower_fault_minutes: 5
+  mower_error_names:
+    trapped: mower is trapped
+    trapped timeout: mower is trapped and cannot get free
+    lifted: mower was lifted
+    upside down: mower is upside down
+    wire missing: no wire signal
+    outside wire: mower is outside the wire
+    wire bounced: mower bounced off the wire
+    reverse wire: reversed wire
+    blade motor blocked: blade motor blocked
+    wheel motor blocked: wheel motor blocked
+    battery low: low battery
+    charge error: charging error
+    battery temperature error: battery temperature out of range
+    timeout finding home: mower cannot find the dock
+    charging station docking error: docking error
+    locked: mower is locked with a PIN
+    close door to mow: close the lid to mow
+    close door to go home: close the lid to return to the dock
+  forecast_rain_block_mm: 0.2
+  significant_measured_rain_mm: 0.2
+  high_rain_probability_percent: 60
+  daytime_search_start: "06:00:00"
+  daytime_search_end: "22:00:00"
+  fiatlux_search_end: "05:00:00"
+  mower_state_names:
+    docked: docked
+    mowing: mowing
+    paused: paused
+    returning: returning to dock
+    error: error
+    unavailable: unavailable
+    unknown: unknown
+  notification_id: >-
+    {{ 'worx_smart_mowing_' ~ mower_entity | replace('.', '_') }}
+  # Number of other running instances of this automation at trigger time.
+  cycle_running: >-
+    {{ ((this.attributes.current | default(0)) | int(0)) > 0 if this is defined else false }}
+  forecast_weather_entity: >-
+    {% set selected = forecast_weather_entity_input | default('', true) %}
+    {% if selected | length > 0 %}
+      {{ selected }}
+    {% elif rain_source_entity.split('.')[0] == 'weather' %}
+      {{ rain_source_entity }}
+    {% else %}
+      {{ '' }}
+    {% endif %}
+  forecast_available: "{{ (forecast_weather_entity | trim | length) > 0 }}"
+  smart_weather_context_available: >-
+    {% set entity = forecast_weather_entity | trim %}
+    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
+    {{ context is mapping and context.get('schema') == 'smart_service.weather.v1' }}
+  smart_weather_context_status: >-
+    {% set entity = forecast_weather_entity | trim %}
+    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
+    {% if context is mapping and context.get('schema') == 'smart_service.weather.v1' %}
+      {{ context.get('status', 'unknown') }}
+    {% else %}
+      unavailable
+    {% endif %}
+  smart_weather_context_usable: >-
+    {{ (smart_weather_context_available | string | lower) == 'true'
+       and (smart_weather_context_status | trim) in ['ready', 'degraded'] }}
+  smart_weather_current_temperature_available: >-
+    {% set entity = forecast_weather_entity | trim %}
+    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
+    {% set current = context.get('current', {}) if context is mapping else {} %}
+    {{ (smart_weather_context_usable | string | lower) == 'true'
+       and current is mapping
+       and current.get('temperature') is not none }}
+  smart_weather_current_temperature: >-
+    {% set entity = forecast_weather_entity | trim %}
+    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
+    {% set current = context.get('current', {}) if context is mapping else {} %}
+    {{ current.get('temperature', 0) | float(0) if current is mapping else 0 }}
+  smart_weather_rain_rate_available: >-
+    {% set entity = forecast_weather_entity | trim %}
+    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
+    {% set current = context.get('current', {}) if context is mapping else {} %}
+    {{ (smart_weather_context_usable | string | lower) == 'true'
+       and current is mapping
+       and current.get('rain_rate') is not none }}
+  smart_weather_rain_rate: >-
+    {% set entity = forecast_weather_entity | trim %}
+    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
+    {% set current = context.get('current', {}) if context is mapping else {} %}
+    {{ current.get('rain_rate', 0) | float(0) if current is mapping else 0 }}
+  smart_weather_rain_today_available: >-
+    {% set entity = forecast_weather_entity | trim %}
+    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
+    {% set current = context.get('current', {}) if context is mapping else {} %}
+    {{ (smart_weather_context_usable | string | lower) == 'true'
+       and current is mapping
+       and current.get('rain_today') is not none }}
+  smart_weather_rain_today: >-
+    {% set entity = forecast_weather_entity | trim %}
+    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
+    {% set current = context.get('current', {}) if context is mapping else {} %}
+    {{ current.get('rain_today', 0) | float(0) if current is mapping else 0 }}
+  model_capacity_m2_per_hour: >-
+    {% set model = mower_model %}
+    {% if model in ['wr202e_250'] %}60
+    {% elif model in ['wr303e_300'] %}65
+    {% elif model in ['wr305e_500', 'wr206e_600'] %}70
+    {% elif model in ['wr365e_650', 'wr365e1_650'] %}75
+    {% elif model in ['wr208e_800', 'wr308e_800'] %}85
+    {% elif model in ['wr213e_1300', 'wr312e_1200', 'wr310_1012'] %}95
+    {% elif model in ['wr216e_1600', 'wr318e_1800', 'wr341e_1000'] %}100
+    {% elif model in ['wr220_2023', 'wr320_2023', 'wr340e_600', 'wr341_us_1012', 'wr342e_2000'] %}105
+    {% elif model in ['wr330e_3000', 'wr340_us_4047'] %}110
+    {% elif model in ['wr344e_4000'] %}115
+    {% elif model in ['wr344_us_4047'] %}120
+    {% else %}{{ manual_mower_capacity_m2_per_hour | float(80) }}
+    {% endif %}
+  mower_capacity_m2_per_hour: >-
+    {% set base = model_capacity_m2_per_hour | float(80) %}
+    {% set adjustment = model_capacity_adjustment_percent | float(100) %}
+    {{ (base * adjustment / 100) | round(0) }}
+  temperature_available: >-
+    {% if temperature_source_entity.split('.')[0] == 'weather' %}
+      {% set available = state_attr(temperature_source_entity, 'temperature') is not none %}
+    {% else %}
+      {% set available = states(temperature_source_entity) not in ['unknown', 'unavailable', 'none', ''] %}
+    {% endif %}
+    {{ available or (smart_weather_current_temperature_available | string | lower) == 'true' }}
+  temp_c: >-
+    {% if temperature_source_entity.split('.')[0] == 'weather'
+          and state_attr(temperature_source_entity, 'temperature') is not none %}
+      {{ state_attr(temperature_source_entity, 'temperature') | float(10) }}
+    {% elif temperature_source_entity.split('.')[0] != 'weather'
+          and states(temperature_source_entity) not in ['unknown', 'unavailable', 'none', ''] %}
+      {{ states(temperature_source_entity) | float(10) }}
+    {% elif (smart_weather_current_temperature_available | string | lower) == 'true' %}
+      {{ smart_weather_current_temperature | float(10) }}
+    {% else %}
+      10
+    {% endif %}
+  configured_rain_mm: >-
+    {% if rain_source_entity.split('.')[0] == 'weather' %}
+      {% set attr_rain_today = state_attr(rain_source_entity, 'rain_today') %}
+      {% set attr_rain = state_attr(rain_source_entity, 'precipitation') %}
+      {% if attr_rain_today is not none %}
+        {{ attr_rain_today | float(0) }}
+      {% elif attr_rain is not none %}
+        {{ attr_rain | float(0) }}
+      {% elif states(rain_source_entity) == 'pouring' %}
+        8
+      {% elif states(rain_source_entity) in ['rainy', 'lightning-rainy', 'snowy-rainy'] %}
+        4
+      {% elif states(rain_source_entity) == 'snowy' %}
+        1
+      {% else %}
+        0
+      {% endif %}
+    {% else %}
+      {{ states(rain_source_entity) | float(0) }}
+    {% endif %}
+  rain_mm: >-
+    {% set configured = configured_rain_mm | float(0) %}
+    {% set smart = smart_weather_rain_today | float(0)
+       if (smart_weather_rain_today_available | string | lower) == 'true'
+       else 0 %}
+    {{ [configured, smart] | max | round(2) }}
+  local_rain_sensor_available: >-
+    {{ states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', ''] }}
+  rain_observation_available: >-
+    {{ (local_rain_sensor_available | string | lower) == 'true'
+       or (smart_weather_rain_rate_available | string | lower) == 'true' }}
+  rain_active_now: >-
+    {% set weather_entity = forecast_weather_entity | trim %}
+    {% set wet_conditions = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'] %}
+    {% if (local_rain_sensor_available | string | lower) == 'true' %}
+      {{ is_state(rain_binary_sensor, 'on') }}
+    {% else %}
+      {{ ((smart_weather_rain_rate_available | string | lower) == 'true'
+          and (smart_weather_rain_rate | float(0)) > 0.05)
+         or (weather_entity | length > 0 and states(weather_entity) in wet_conditions) }}
+    {% endif %}
+  rain_drying_hours: >-
+    {% set base = dry_after_rain_hours | float(3) %}
+    {{ base * (2 if (rain_mm | float(0)) > (max_rain_24h_mm | float(3)) else 1) }}
+  # Moment from which the grass is considered dry. Ongoing rain counts from now,
+  # and finished rain from the moment the sensor switched to dry. Finished rain is
+  # only taken into account when significant rain was measured (at least 0.2 mm) and the rainfall
+  # total sensor changed recently; the sensor turning on without a rainfall increase (e.g. from dew)
+  # or both sensors dropping out and coming back together after a connection loss are ignored.
+  rain_drying_ready_ts: >-
+    {% set drying_seconds = (rain_drying_hours | float(3)) * 3600 %}
+    {% set now_value = as_timestamp(now()) %}
+    {% if (rain_active_now | string | lower) == 'true' %}
+      {{ now_value + drying_seconds }}
+    {% elif (local_rain_sensor_available | string | lower) == 'true'
+          and is_state(rain_binary_sensor, 'off')
+          and (rain_mm | float(0)) >= (significant_measured_rain_mm | float(0.2)) %}
+      {% set off_ts = as_timestamp(states[rain_binary_sensor].last_changed) %}
+      {% set ready = off_ts + drying_seconds %}
+      {% set amount_state = states[rain_source_entity] if rain_source_entity.split('.')[0] != 'weather' else none %}
+      {% if amount_state is not none %}
+        {% set amount_ts = as_timestamp(amount_state.last_changed) %}
+        {% set recent_rain = (now_value - amount_ts) <= drying_seconds + 7200
+            and ((off_ts - amount_ts) | abs) > 60 %}
+      {% else %}
+        {% set recent_rain = true %}
+      {% endif %}
+      {{ ready if ready > now_value and recent_rain else 0 }}
+    {% else %}
+      0
+    {% endif %}
+  outdoor_humidity_percent: >-
+    {% set selected = outdoor_humidity_sensor | default('', true) %}
+    {% if selected | length > 0 and states(selected) not in ['unknown', 'unavailable', 'none', ''] %}
+      {{ states(selected) | float(60) }}
+    {% elif (forecast_weather_entity | trim | length) > 0
+          and state_attr(forecast_weather_entity | trim, 'humidity') is not none %}
+      {{ state_attr(forecast_weather_entity | trim, 'humidity') | float(60) }}
+    {% else %}
+      60
+    {% endif %}
+  outdoor_humidity_available: >-
+    {% set selected = outdoor_humidity_sensor | default('', true) %}
+    {{ (selected | length > 0 and states(selected) not in ['unknown', 'unavailable', 'none', ''])
+       or ((forecast_weather_entity | trim | length) > 0
+           and state_attr(forecast_weather_entity | trim, 'humidity') is not none) }}
+  # Difference between air temperature and dew point (Magnus formula). 99 means no data.
+  dew_point_spread_c: >-
+    {% set t = temp_c | float(none) %}
+    {% set rh = outdoor_humidity_percent | float(none) %}
+    {% if (outdoor_humidity_available | string | lower) == 'true'
+          and (temperature_available | string | lower) == 'true'
+          and t is not none and rh is not none and rh > 0 %}
+      {% set g = (([rh, 100] | min) / 100) | log + 17.62 * t / (243.12 + t) %}
+      {{ (t - 243.12 * g / (17.62 - g)) | round(1) }}
+    {% else %}
+      99
+    {% endif %}
+  sunlight_index: >-
+    {% if sunlight_source_entity.split('.')[0] == 'weather' %}
+      {{ state_attr(sunlight_source_entity, 'uv_index') | float(5) }}
+    {% else %}
+      {{ states(sunlight_source_entity) | float(5) }}
+    {% endif %}
+  soil_sensor_value: >-
+    {% set entity = soil_moisture_sensor | default('', true) %}
+    {% if entity | length > 0 and states(entity) not in ['unknown', 'unavailable', 'none', ''] %}
+      {{ states(entity) | float(-1) }}
+    {% else %}
+      -1
+    {% endif %}
+  soil_moisture: >-
+    {% set sensor_value = soil_sensor_value | float(-1) %}
+    {% if sensor_value >= 0 %}
+      {{ sensor_value }}
+    {% else %}
+      {% set rain = rain_mm | float(0) %}
+      {% set temp = temp_c | float(10) %}
+      {% set sun = sunlight_index | float(5) %}
+      {% set m = now().month %}
+      {% set base = 72 if m in [12, 1, 2] else (58 if m in [3, 4, 10, 11] else 45) %}
+      {% set temp_drying = -8 if temp < 5 else (-3 if temp < 12 else (4 if temp < 20 else (10 if temp < 26 else (18 if temp < 32 else 25)))) %}
+      {% set raw = base + rain * 7 - temp_drying - sun * 1.8 %}
+      {% if raw < 15 %}15{% elif raw > 95 %}95{% else %}{{ raw | round(0) }}{% endif %}
+    {% endif %}
+  estimated_growth_mm: "{{ states(growth_helper) | float(0) }}"
+  last_mow_ts: "{{ state_attr(last_mow_helper, 'timestamp') | float(0) }}"
+  mowing_gap_ready_ts: >-
+    {% set last_ts = last_mow_ts | float(0) %}
+    {% set min_gap = min_days_between_mows | float(1) %}
+    {% if last_ts <= 0 or min_gap <= 0 %}
+      0
+    {% elif min_gap < 1 %}
+      {{ last_ts + (min_gap * 86400) }}
+    {% else %}
+      {% set last_local = last_ts | as_datetime | as_local %}
+      {% set days = (last_local.date() - now().date()).days + (min_gap | round(0, 'ceil') | int) %}
+      {{ as_timestamp(today_at('00:00:00') + timedelta(days=days)) }}
+    {% endif %}
+  coverage_factor: >-
+    {% set threshold = growth_threshold_mm | float %}
+    {% set pressure = (estimated_growth_mm | float) / (threshold if threshold > 0 else 0.1) %}
+    {% set raw = 0.45 + (pressure * 0.35) %}
+    {% if raw < 0.45 %}0.45{% elif raw > 1 %}1{% else %}{{ raw | round(2) }}{% endif %}
+  growth_runtime_factor: >-
+    {% set g = estimated_growth_mm | float %}
+    {% if g >= (high_growth_threshold_mm | float) %}1.25
+    {% elif g >= (growth_threshold_mm | float) %}1
+    {% else %}0.75
+    {% endif %}
+  recommended_runtime_minutes: >-
+    {% set capacity = mower_capacity_m2_per_hour | float %}
+    {% set raw = ((lawn_area_m2 | float) / (capacity if capacity > 0 else 1)) * 60 * (coverage_factor | float) * (growth_runtime_factor | float) %}
+    {% set rounded = raw | round(0) | int %}
+    {% if rounded < (min_runtime_minutes | int) %}{{ min_runtime_minutes | int }}{% elif rounded > (max_runtime_minutes | int) %}{{ max_runtime_minutes | int }}{% else %}{{ rounded }}{% endif %}
+  normal_mowing_runtime_minutes: >-
+    {% set runtime = recommended_runtime_minutes | int(60) %}
+    {% if runtime < 10 %}10{% elif runtime > 120 %}120{% else %}{{ runtime }}{% endif %}
+  normal_mowing_command_runtime_minutes: >-
+    {% if mower_cycle_type == 'vision_rtk' %}
+      120
+    {% else %}
+      {{ normal_mowing_runtime_minutes }}
+    {% endif %}
+  normal_mowing_monitor_limit_minutes: >-
+    {% if mower_cycle_type == 'vision_rtk' %}
+      720
+    {% else %}
+      {{ normal_mowing_runtime_minutes }}
+    {% endif %}
+  normal_mowing_mode_label: >-
+    {% if mower_cycle_type == 'vision_rtk' %}
+      Vision / RTK mower finishes mowing on its own based on the map; the time in the command is only a technical safety limit
+    {% else %}
+      older wired mower uses the calculated time of {{ normal_mowing_runtime_minutes }} min
+    {% endif %}
+  start_block_code: >-
+    {% if states(mower_entity) != 'docked' %}mower_away
+    {% elif mowing_window_preset == 'night' and not (fiatlux_installed | bool) %}config
+    {% elif allowed_days_enabled and allowed_days | length == 0 %}config_days
+    {% elif allowed_days_enabled and ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][now().weekday()] not in allowed_days %}day
+    {% elif daylight_only and (daylight_now | string | lower) != 'true' %}dark
+    {% elif garden_check_enabled and (garden_occupied | string | lower) == 'true' %}garden
+    {% elif (states(battery_sensor) | float(0)) < (min_battery_percent | float) %}battery
+    {% elif (temperature_available | string | lower) != 'true' %}sensor
+    {% elif (temp_c | float) < (min_mowing_temperature_c | float) or (temp_c | float) > (max_mowing_temperature_c | float) %}temperature
+    {% elif (rain_observation_available | string | lower) != 'true' %}sensor
+    {% elif state_attr(mower_entity, 'rain_delay') == true %}rain_delay
+    {% elif (rain_active_now | string | lower) == 'true' %}rain
+    {% elif (rain_drying_ready_ts | float(0)) > as_timestamp(now()) %}drying
+    {% elif (dew_point_spread_c | float(99)) < (min_dew_point_spread_c | float(2.5)) %}humidity
+    {% elif (soil_moisture | float) > (max_soil_moisture_percent | float) %}soil
+    {% elif (estimated_growth_mm | float) < (growth_threshold_mm | float) %}growth
+    {% elif (mowing_gap_ready_ts | float(0)) > as_timestamp(now()) %}gap
+    {% else %}{{ '' }}{% endif %}
+  start_block_reason: >-
+    {% set code = start_block_code | trim %}
+    {% if code == 'mower_away' and is_state(mower_entity, 'error') %}
+      {% set raw = state_attr(mower_entity, 'error_description') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}mower reported an error{% if raw %}: {{ mower_error_names.get(raw | lower, raw) }} ({{ raw }}){% endif %}. Check the mower on the lawn
+    {% elif code == 'mower_away' %}
+      mower is not docked (state: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }})
+    {% elif code == 'config' %}
+      night mowing is selected, but the FiatLux accessory has not been confirmed as installed
+    {% elif code == 'config_days' %}
+      mowing only on selected days is enabled, but no day is selected
+    {% elif code == 'day' %}
+      today is not a selected mowing day
+    {% elif code == 'dark' and (sun_rise_s | float(-1)) < 0 %}
+      mowing only in daylight is enabled, but the sun.sun entity is missing
+    {% elif code == 'dark' %}
+      it is too dark; mowing only in daylight, today from {{ ((sun_rise_s | float) + (daylight_margin_minutes | float(30)) * 60) | timestamp_custom('%H:%M', false) }} to {{ ((sun_set_s | float) - (daylight_margin_minutes | float(30)) * 60) | timestamp_custom('%H:%M', false) }}
+    {% elif code == 'garden' %}
+      someone is in the garden
+    {% elif code == 'battery' %}
+      battery is at {{ states(battery_sensor) }}%, and the required minimum is {{ min_battery_percent }}%
+    {% elif code == 'sensor' and (temperature_available | string | lower) != 'true' %}
+      cannot read the current outdoor temperature
+    {% elif code == 'sensor' %}
+      cannot read the current rain state from either the sensor or MeteoFusion HA
+    {% elif code == 'temperature' and (temp_c | float) < (min_mowing_temperature_c | float) %}
+      temperature is {{ temp_c | float | round(0) | int }} °C, and the minimum for mowing is {{ min_mowing_temperature_c | int }} °C
+    {% elif code == 'temperature' %}
+      temperature is {{ temp_c | float | round(0) | int }} °C, and the maximum for mowing is {{ max_mowing_temperature_c | int }} °C
+    {% elif code == 'rain_delay' %}
+      Worx Cloud reports an active rain delay
+    {% elif code == 'rain' %}
+      local measurement or MeteoFusion HA shows ongoing rain
+    {% elif code == 'drying' %}
+      grass is drying after rain; earliest safe start at {{ (rain_drying_ready_ts | float(0)) | timestamp_custom('%H:%M', true) }}
+    {% elif code == 'humidity' %}
+      the air is only {{ dew_point_spread_c | float(0) | round(1) | string | replace('.', '.') }} °C warmer than the dew point (humidity {{ outdoor_humidity_percent | float | round(0) | int }}%), so the grass is still wet from dew or fog
+    {% elif code == 'soil' %}
+      soil is too wet: {{ soil_moisture }}%
+    {% elif code == 'growth' %}
+      grass has grown only {{ estimated_growth_mm | float(0) | round(1) | string | replace('.', '.') }} mm, and mowing starts at {{ growth_threshold_mm | float(3) | round(1) | string | replace('.', '.') }} mm
+    {% elif code == 'gap' %}
+      the minimum gap since the last mowing has not passed yet; earliest {{ (mowing_gap_ready_ts | float(0)) | timestamp_custom('%d.%m %H:%M', true) }}
+    {% else %}
+      {{ '' }}
+    {% endif %}
+  # Minimum delay of the next attempt depending on the block cause, so that the same
+  # obstacle does not cause attempts and notifications every few minutes.
+  start_block_delay_minutes: >-
+    {% set code = start_block_code | trim %}
+    {% set with_forecast = (forecast_available | string | lower) == 'true' and planning_mode == 'auto' %}
+    {% set delays = {
+      'mower_away': 120,
+      'config': 720,
+      'config_days': 720,
+      'day': 0,
+      'dark': 0 if (sun_rise_s | float(-1)) >= 0 else 720,
+      'garden': 30,
+      'battery': 60,
+      'sensor': 60,
+      'temperature': 30 if with_forecast else 60,
+      'rain_delay': 60,
+      'rain': 0,
+      'drying': 0,
+      'humidity': 60,
+      'soil': 180,
+      'growth': 0,
+      'gap': 0
+    } %}
+    {{ delays.get(code, 60) }}
+
+actions:
+  - choose:
+      - alias: Rebuild the plan when the saved time is outdated
+        conditions:
+          - condition: template
+            value_template: >-
+              {% set planned = state_attr(next_mow_helper, 'timestamp') %}
+              {{ trigger.id == 'start_due_check'
+                 and (cycle_running | string | lower) != 'true'
+                 and (planned is none
+                      or (planned | float(0)) < as_timestamp(now()) - ((missed_start_grace_minutes | int(30)) * 60)) }}
+        sequence:
+          - event: worx_smart_mowing_replan
+            event_data:
+              mower_entity: "{{ mower_entity }}"
+              kind: recovery
+      - alias: Recalculate growth and plan mowing (with forecast)
+        conditions:
+          - condition: template
+            value_template: "{{ trigger.id in ['update_growth', 'replan'] and (forecast_available | string | lower) == 'true' }}"
+        sequence:
+          - action: weather.get_forecasts
+            continue_on_error: true
+            target:
+              entity_id: "{{ forecast_weather_entity | trim }}"
+            data:
+              type: hourly
+            response_variable: plan_forecast
+          - sequence: &plan_sequence
+              - variables:
+                  plan_kind: >-
+                    {{ 'daily' if trigger.id == 'update_growth' else (trigger.event.data.kind | default('recovery')) }}
+                  plan_event: >-
+                    {{ trigger.event.data if trigger.id == 'replan' else {} }}
+                  fc_items: >-
+                    {%- set ns = namespace(items=[]) -%}
+                    {%- if plan_forecast is defined and plan_forecast is mapping -%}
+                      {%- set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] -%}
+                      {%- set raw = plan_forecast.get(forecast_weather_entity | trim, {}).get('forecast', []) -%}
+                      {%- for item in raw[:(weather_forecast_max_items | int(120))] if item is mapping -%}
+                        {%- set t = as_timestamp(item.get('datetime'), 0) | float(0) -%}
+                        {%- if t > 0 -%}
+                          {%- set condition = item.get('condition') -%}
+                          {%- set item_temp = item.get('temperature') | float(none) -%}
+                          {%- set item_hum = item.get('humidity') | float(none) -%}
+                          {%- if item_temp is not none and item_hum is not none and item_hum > 0 -%}
+                            {%- set g = (([item_hum, 100] | min) / 100) | log + 17.62 * item_temp / (243.12 + item_temp) -%}
+                            {%- set item_spread = (item_temp - 243.12 * g / (17.62 - g)) | round(1) -%}
+                          {%- else -%}
+                            {%- set item_spread = none -%}
+                          {%- endif -%}
+                          {%- set ns.items = ns.items + [{
+                            't': t,
+                            'temp': item.get('temperature') | float(none),
+                            'rain': item.get('precipitation') | float(0),
+                            'prob': item.get('precipitation_probability') | float(0),
+                            'hum': item.get('humidity') | float(none),
+                            'wind': item.get('wind_speed') | float(0),
+                            'uv': item.get('uv_index') | float(none),
+                            'conf': item.get('confidence') | float(70),
+                            'cond': (condition | string) if condition is not none else '',
+                            'bad': condition in bad,
+                            'spread': item_spread,
+                            'wet': (item_spread < (min_dew_point_spread_c | float(2.5))) if item_spread is not none
+                                   else (item_hum is not none and item_hum > (wet_grass_humidity_percent | float(88)))
+                          }] -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                    {%- endif -%}
+                    {{ ns.items | sort(attribute='t') }}
+                  day_items: >-
+                    {%- set start = as_timestamp(now()) - 1800 -%}
+                    {{ fc_items | selectattr('t', '>=', start) | selectattr('t', '<', start + 86400) | list }}
+                  growth_temp_c: >-
+                    {% set temps = day_items | map(attribute='temp') | reject('none') | list %}
+                    {% if temps | length >= 12 %}
+                      {{ ((temps | sum) / (temps | length)) | round(1) }}
+                    {% else %}
+                      {{ temp_c | float(10) }}
+                    {% endif %}
+                  growth_uv_index: >-
+                    {% set values = day_items | map(attribute='uv') | reject('none') | list %}
+                    {% set seasonal = {1: 1, 2: 1.5, 3: 2.5, 4: 4, 5: 5.5, 6: 6.5, 7: 6.5, 8: 5.5, 9: 4, 10: 2.5, 11: 1.2, 12: 0.8} %}
+                    {% if values | length > 0 %}
+                      {{ values | max }}
+                    {% elif (sunlight_index | float(0)) >= 1 %}
+                      {{ sunlight_index | float(5) }}
+                    {% else %}
+                      {{ seasonal[now().month] }}
+                    {% endif %}
+                  growth_rain_mm: >-
+                    {% set forecast_rain = day_items | map(attribute='rain') | sum %}
+                    {{ [rain_mm | float(0), forecast_rain] | max | round(2) }}
+                  growth_soil_moisture: >-
+                    {% set sensor_value = soil_sensor_value | float(-1) %}
+                    {% if sensor_value >= 0 %}
+                      {{ sensor_value }}
+                    {% else %}
+                      {% set rain = growth_rain_mm | float(0) %}
+                      {% set temp = growth_temp_c | float(10) %}
+                      {% set sun = growth_uv_index | float(5) %}
+                      {% set m = now().month %}
+                      {% set base = 72 if m in [12, 1, 2] else (58 if m in [3, 4, 10, 11] else 45) %}
+                      {% set temp_drying = -8 if temp < 5 else (-3 if temp < 12 else (4 if temp < 20 else (10 if temp < 26 else (18 if temp < 32 else 25)))) %}
+                      {% set raw = base + rain * 7 - temp_drying - sun * 1.8 %}
+                      {% if raw < 15 %}15{% elif raw > 95 %}95{% else %}{{ raw | round(0) }}{% endif %}
+                    {% endif %}
+                  growth_daily_mm: >-
+                    {% set t = growth_temp_c | float(10) %}
+                    {% if t < 3 %}
+                      {% set temp_factor = 0 %}
+                    {% else %}
+                      {% set gp = 2.718281828459045 ** (-0.5 * (((t - 20) / 5.5) ** 2)) %}
+                      {% set temp_factor = 0.02 if gp < 0.02 else ([gp, 1] | min) %}
+                    {% endif %}
+                    {% set r = growth_rain_mm | float(0) %}
+                    {% set rain_factor = 0.75 if r < 0.2 else (0.9 if r < 2 else (1 if r < 10 else (0.9 if r < 25 else 0.7))) %}
+                    {% if automatic_irrigation_enabled and rain_factor < 0.95 %}{% set rain_factor = 0.95 %}{% endif %}
+                    {% set s = growth_soil_moisture | float(50) %}
+                    {% set soil_factor = 0.35 if s < 20 else (0.65 if s < 35 else (1 if s <= 80 else (0.9 if s <= 95 else 0.75))) %}
+                    {% if automatic_irrigation_enabled and s < 80 and soil_factor < 0.95 %}{% set soil_factor = 0.95 %}{% endif %}
+                    {% set u = growth_uv_index | float(5) %}
+                    {% set sun_factor = 0.35 if u < 1 else (0.65 if u < 3 else (1 if u <= 8 else 0.85)) %}
+                    {% set m = now().month %}
+                    {% set season_factor = 0.15 if m in [12, 1, 2] else (0.65 if m in [3, 11] else (0.9 if m in [4, 10] else 1)) %}
+                    {% set irrigation_factor = (1 + (((irrigation_growth_adjustment_percent | float(140)) - 100) / 100) * 0.35) if automatic_irrigation_enabled else 1 %}
+                    {% set fertilization_factor = (1 + (((fertilization_growth_adjustment_percent | float(125)) - 100) / 100) * 0.4) if fertilization_enabled else 1 %}
+                    {% set raw = 8.5 * temp_factor * rain_factor * soil_factor * sun_factor * season_factor * irrigation_factor * fertilization_factor %}
+                    {% if raw < 0 %}0{% elif raw > 12 %}12{% else %}{{ raw | round(1) }}{% endif %}
+                  growth_inputs_label: >-
+                    average {{ growth_temp_c | float | round(1) }} °C, max UV {{ growth_uv_index | float | round(1) }}, rain {{ growth_rain_mm | float | round(1) }} mm{% if (soil_sensor_value | float(-1)) < 0 %}, estimated soil moisture {{ growth_soil_moisture | float | round(0) | int }}%{% else %}, soil moisture {{ growth_soil_moisture | float | round(0) | int }}%{% endif %}
+                  plan_growth_mm: >-
+                    {% set before = states(growth_helper) | float(0) %}
+                    {% set raw = before + ((growth_daily_mm | float(0)) if plan_kind == 'daily' else 0) %}
+                    {% if raw < 0 %}0{% elif raw > 40 %}40{% else %}{{ raw | round(1) }}{% endif %}
+              - if:
+                  - condition: template
+                    value_template: "{{ plan_kind == 'daily' }}"
+                then:
+                  - action: input_number.set_value
+                    target:
+                      entity_id: !input growth_helper
+                    data:
+                      value: "{{ plan_growth_mm }}"
+              - if:
+                  - condition: template
+                    value_template: "{{ plan_kind == 'daily' and (cycle_running | string | lower) == 'true' }}"
+                then:
+                  - stop: Mowing cycle in progress; its end or interruption will set the next time.
+              - variables:
+                  next_update_ts: >-
+                    {% set today_update = as_timestamp(today_at(growth_update_time_value)) %}
+                    {{ today_update if as_timestamp(now()) < today_update else as_timestamp(today_at(growth_update_time_value) + timedelta(days=1)) }}
+                  growth_ready_ts: >-
+                    {% set threshold = growth_threshold_mm | float(3) %}
+                    {% set growth = plan_growth_mm | float(0) %}
+                    {% if growth >= threshold %}
+                      0
+                    {% else %}
+                      {% set daily = growth_daily_mm | float(0) %}
+                      {% set days = 7 if daily <= 0.1 else ([((threshold - growth) / daily) | round(0, 'ceil') | int, 14] | min) %}
+                      {% set offset = 0 if as_timestamp(now()) < as_timestamp(today_at(growth_update_time_value)) else 1 %}
+                      {{ as_timestamp(today_at(growth_update_time_value) + timedelta(days=offset + days - 1)) }}
+                    {% endif %}
+                  plan_min_delay_seconds: >-
+                    {{ ((plan_event.get('min_delay_minutes', 0) if plan_event is mapping else 0) | float(0)) * 60 }}
+                  plan_earliest_ts: >-
+                    {% set now_value = as_timestamp(now()) %}
+                    {{ [now_value + 300,
+                        growth_ready_ts | float(0),
+                        mowing_gap_ready_ts | float(0),
+                        rain_drying_ready_ts | float(0),
+                        now_value + (plan_min_delay_seconds | float(0))] | max }}
+                  plan_constraint: >-
+                    {% set now_value = as_timestamp(now()) %}
+                    {% set earliest = plan_earliest_ts | float %}
+                    {% if earliest <= now_value + 301 %}none
+                    {% elif earliest == (growth_ready_ts | float(0)) %}growth
+                    {% elif earliest == (mowing_gap_ready_ts | float(0)) %}gap
+                    {% elif earliest == (rain_drying_ready_ts | float(0)) %}drying
+                    {% else %}delay{% endif %}
+              - variables:
+                  plan_result: >-
+                    {%- macro dozwolony(ts) -%}
+                      {%- set l = ts | as_datetime | as_local -%}
+                      {%- set sod = l.hour * 3600 + l.minute * 60 -%}
+                      {%- set m = (daylight_margin_minutes | float(30)) * 60 -%}
+                      {{- (not allowed_days_enabled
+                            or ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][l.weekday()] in allowed_days)
+                          and (not daylight_only
+                            or ((sun_rise_s | float(-1)) >= 0 and sod >= (sun_rise_s | float) + m
+                                and sod <= (sun_set_s | float) - m)) -}}
+                    {%- endmacro -%}
+                    {%- set step = auto_planning_step_seconds | int(900) -%}
+                    {%- set earliest = plan_earliest_ts | float -%}
+                    {%- set primary = primary_start_time_value | trim -%}
+                    {%- set backup = backup_start_time_value | trim -%}
+                    {%- set crosses = backup <= primary -%}
+                    {%- set fiatlux = fiatlux_installed | bool -%}
+                    {%- set night = mowing_window_preset == 'night' -%}
+                    {%- set today = now().date() -%}
+                    {%- set earliest_local = earliest | as_datetime | as_local -%}
+                    {%- set earliest_day = (earliest_local.date() - today).days -%}
+                    {%- set earliest_clock = earliest_local.strftime('%H:%M:%S') -%}
+                    {%- set base_day = earliest_day - 1 if ((crosses and earliest_clock < backup)
+                        or (fiatlux and not night and earliest_clock < fiatlux_search_end)) else earliest_day -%}
+                    {%- set items = fc_items -%}
+                    {%- set last_t = (items | map(attribute='t') | max) if items | length > 0 else 0 -%}
+                    {%- set urgent = (plan_growth_mm | float(0)) >= (high_growth_threshold_mm | float(999)) -%}
+                    {%- set per_hour = 20 if urgent else 2 -%}
+                    {%- set tmin = min_mowing_temperature_c | float(10) -%}
+                    {%- set tmax = max_mowing_temperature_c | float(25) -%}
+                    {%- set wet = wet_grass_humidity_percent | float(88) -%}
+                    {%- set block = forecast_rain_block_mm | float(0.2) -%}
+                    {%- set high = high_rain_probability_percent | float(60) -%}
+                    {%- set dry_s = (dry_after_rain_hours | float(3)) * 3600 -%}
+                    {%- set horizon_s = (forecast_dry_horizon_hours | float(3)) * 3600 -%}
+                    {%- set min_future = forecast_min_future_hours | int(2) -%}
+                    {%- set heavy_mm = max_rain_24h_mm | float(3) -%}
+                    {%- set result = namespace(ts=0, source='', in_window=false, window_checked=false, why=[], shifted=false, fb_ts=0, fb_score=99999999, fb_in_window=false, fb_source='') -%}
+                    {%- if planning_mode == 'auto' and items | length > 0 -%}
+                      {%- for d in range(base_day, base_day + (weather_search_days | int(4))) -%}
+                        {%- if result.ts == 0 -%}
+                          {%- set ps = as_timestamp(today_at(primary) + timedelta(days=d)) -%}
+                          {%- set pe = as_timestamp(today_at(backup) + timedelta(days=d + (1 if crosses else 0))) -%}
+                          {%- if night -%}
+                            {%- set rs = ps -%}
+                            {%- set re = pe -%}
+                          {%- else -%}
+                            {%- set rs = [as_timestamp(today_at(daytime_search_start) + timedelta(days=d)), ps] | min -%}
+                            {%- set re_default = as_timestamp(today_at(fiatlux_search_end) + timedelta(days=d + 1)) if fiatlux else as_timestamp(today_at(daytime_search_end) + timedelta(days=d)) -%}
+                            {%- set re = [re_default, pe] | max -%}
+                          {%- endif -%}
+                          {%- set mid = (ps + pe) / 2 -%}
+                          {%- set first = ((([rs, earliest] | max) / step) | round(0, 'ceil') | int) * step -%}
+                          {%- set last = [re, last_t] | min -%}
+                          {%- set day = namespace(pref_ts=0, pref_score=99999999, any_ts=0, any_score=99999999, window_checked=false, why=[]) -%}
+                          {%- if first > last_t -%}
+                            {%- set candidate = ps if earliest <= ps else (first if first <= pe else 0) -%}
+                            {%- if candidate > 0 -%}
+                              {%- set candidate_score = 2500 + ((candidate - earliest) / 3600) * per_hour -%}
+                              {%- if candidate_score < result.fb_score -%}
+                                {%- set result.fb_score = candidate_score -%}
+                                {%- set result.fb_ts = candidate -%}
+                                {%- set result.fb_in_window = true -%}
+                                {%- set result.fb_source = 'beyond_forecast' -%}
+                              {%- endif -%}
+                            {%- endif -%}
+                          {%- elif first <= last -%}
+                            {%- for slot in range(0, (((last - first) / step) | round(0, 'floor') | int) + 1) -%}
+                              {%- set ts = first + slot * step -%}
+                              {%- if dozwolony(ts) == 'True' -%}
+                              {%- set fc = namespace(seen=false, rain=0, prob=0, temp=none, hum=none, wind=0, bad=false, conf=70, wet=false) -%}
+                              {%- set rec = namespace(rain=0, bad=false, heavy=0) -%}
+                              {%- set fut = namespace(seen=0, rain=0, prob=0, unsafe=false) -%}
+                              {%- for it in items -%}
+                                {%- if it.t <= ts -%}
+                                  {%- if it.t > ts - 3600 -%}
+                                    {%- set fc.seen = true -%}
+                                    {%- set fc.rain = it.rain -%}
+                                    {%- set fc.prob = it.prob -%}
+                                    {%- set fc.temp = it.temp -%}
+                                    {%- set fc.hum = it.hum -%}
+                                    {%- set fc.wet = it.wet -%}
+                                    {%- set fc.wind = it.wind -%}
+                                    {%- set fc.bad = it.bad -%}
+                                    {%- set fc.conf = it.conf -%}
+                                  {%- endif -%}
+                                  {%- if it.t > ts - dry_s -%}
+                                    {%- set rec.rain = rec.rain + it.rain -%}
+                                    {%- if it.bad -%}
+                                      {%- set rec.bad = true -%}
+                                    {%- endif -%}
+                                  {%- endif -%}
+                                  {%- if it.t > ts - 2 * dry_s -%}
+                                    {%- set rec.heavy = rec.heavy + it.rain -%}
+                                  {%- endif -%}
+                                {%- elif it.t <= ts + horizon_s -%}
+                                  {%- set fut.seen = fut.seen + 1 -%}
+                                  {%- set fut.rain = fut.rain + it.rain -%}
+                                  {%- if it.prob > fut.prob -%}
+                                    {%- set fut.prob = it.prob -%}
+                                  {%- endif -%}
+                                  {%- if it.bad
+                                      or (it.temp is not none and (it.temp < tmin or it.temp > tmax))
+                                      or it.wet -%}
+                                    {%- set fut.unsafe = true -%}
+                                  {%- endif -%}
+                                {%- endif -%}
+                              {%- endfor -%}
+                              {%- set rec_wet = rec.rain > block or rec.bad or rec.heavy > heavy_mm -%}
+                              {%- set temp_ok = fc.temp is none or (fc.temp >= tmin and fc.temp <= tmax) -%}
+                              {%- set hum_ok = not fc.wet -%}
+                              {%- set rain_ok = (fc.rain + fut.rain) <= block and not fc.bad and fc.prob <= high and fut.prob <= high -%}
+                              {%- set data_ok = fc.seen and fut.seen >= min_future -%}
+                              {%- set safe = data_ok and temp_ok and hum_ok and rain_ok and not rec_wet and not fut.unsafe -%}
+                              {%- set in_window = ts >= ps and ts <= pe -%}
+                              {%- if in_window -%}
+                                {%- set day.window_checked = true -%}
+                              {%- endif -%}
+                              {%- set score = fc.prob * 1.5 + fut.prob + (fc.rain + fut.rain) * 300
+                                  + ((((fc.temp - 20) | abs) * 2) if fc.temp is not none else 10)
+                                  + ((([fc.hum - 75, 0] | max) * 3) if fc.hum is not none else 0)
+                                  + fc.wind * 0.8 + (100 - fc.conf) * 0.4
+                                  + (((ts - mid) | abs) / 3600) * 1.2
+                                  + ((ts - earliest) / 3600) * per_hour -%}
+                              {%- if safe -%}
+                                {%- if in_window and score < day.pref_score -%}
+                                  {%- set day.pref_score = score -%}
+                                  {%- set day.pref_ts = ts -%}
+                                {%- endif -%}
+                                {%- if score < day.any_score -%}
+                                  {%- set day.any_score = score -%}
+                                  {%- set day.any_ts = ts -%}
+                                {%- endif -%}
+                              {%- else -%}
+                                {%- if in_window -%}
+                                  {%- set day.why = day.why + (['rain'] if not rain_ok else [])
+                                      + (['wet_after_rain'] if rec_wet else []) + (['dew'] if not hum_ok else [])
+                                      + (['temperature'] if not temp_ok else []) + (['data'] if not data_ok else [])
+                                      + (['later'] if fut.unsafe and rain_ok and not rec_wet and hum_ok and temp_ok and data_ok else []) -%}
+                                {%- endif -%}
+                                {%- set penalty = (0 if data_ok else 6000) + (0 if rain_ok else 10000)
+                                    + (1800 if rec_wet else 0) + (6000 if fut.unsafe else 0)
+                                    + (0 if temp_ok else 3000) + (0 if hum_ok else 1500) -%}
+                                {%- if score + penalty < result.fb_score -%}
+                                  {%- set result.fb_score = score + penalty -%}
+                                  {%- set result.fb_ts = ts -%}
+                                  {%- set result.fb_in_window = in_window -%}
+                                  {%- set result.fb_source = 'best_effort' -%}
+                                {%- endif -%}
+                              {%- endif -%}
+                              {%- endif -%}
+                            {%- endfor -%}
+                          {%- endif -%}
+                          {%- if day.pref_ts > 0 -%}
+                            {%- set result.ts = day.pref_ts -%}
+                            {%- set result.source = 'forecast' -%}
+                            {%- set result.in_window = true -%}
+                          {%- elif day.any_ts > 0 -%}
+                            {%- set result.ts = day.any_ts -%}
+                            {%- set result.source = 'forecast' -%}
+                            {%- set result.in_window = false -%}
+                            {%- set result.window_checked = day.window_checked -%}
+                            {%- set result.why = day.why | unique | list -%}
+                          {%- endif -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                      {%- if result.ts == 0 and result.fb_ts > 0 -%}
+                        {%- set result.ts = result.fb_ts -%}
+                        {%- set result.source = result.fb_source -%}
+                        {%- set result.in_window = result.fb_in_window -%}
+                      {%- endif -%}
+                    {%- endif -%}
+                    {%- if result.ts == 0 and planning_mode != 'auto' -%}
+                      {%- set fixed = namespace(best=0) -%}
+                      {%- for d in range(earliest_day - 1, earliest_day + 9) -%}
+                        {%- set first_try = as_timestamp(today_at(primary) + timedelta(days=d)) -%}
+                        {%- set second_try = as_timestamp(today_at(backup) + timedelta(days=d + (1 if crosses else 0))) -%}
+                        {%- for candidate in [first_try, second_try] -%}
+                          {%- if candidate >= earliest and (fixed.best == 0 or candidate < fixed.best) -%}
+                            {%- set fixed.best = candidate -%}
+                          {%- endif -%}
+                        {%- endfor -%}
+                      {%- endfor -%}
+                      {%- set result.ts = fixed.best -%}
+                      {%- set result.source = 'fixed' -%}
+                      {%- set result.in_window = true -%}
+                    {%- endif -%}
+                    {%- if result.ts == 0 -%}
+                      {%- set window = namespace(best=0) -%}
+                      {%- for d in range(base_day, base_day + 9) -%}
+                        {%- if window.best == 0 -%}
+                          {%- set ps = as_timestamp(today_at(primary) + timedelta(days=d)) -%}
+                          {%- set pe = as_timestamp(today_at(backup) + timedelta(days=d + (1 if crosses else 0))) -%}
+                          {%- if earliest <= ps -%}
+                            {%- set window.best = ps -%}
+                          {%- elif earliest <= pe -%}
+                            {%- set window.best = ((earliest / step) | round(0, 'ceil') | int) * step -%}
+                          {%- endif -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                      {%- set result.ts = window.best if window.best > 0 else ((earliest / step) | round(0, 'ceil') | int) * step -%}
+                      {%- set result.source = 'window' -%}
+                      {%- set result.in_window = window.best > 0 -%}
+                    {%- endif -%}
+                    {%- if (allowed_days_enabled or daylight_only) and result.ts > 0 and dozwolony(result.ts) != 'True' -%}
+                      {%- set shift = namespace(ts=0) -%}
+                      {%- set base = ((result.ts / step) | round(0, 'ceil') | int) * step -%}
+                      {%- for k in range(1, 14 * 96 + 1) -%}
+                        {%- if shift.ts == 0 and dozwolony(base + k * step) == 'True' -%}
+                          {%- set shift.ts = base + k * step -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                      {%- if shift.ts > 0 -%}
+                        {%- set result.ts = shift.ts -%}
+                        {%- set result.in_window = false -%}
+                        {%- set result.shifted = true -%}
+                      {%- endif -%}
+                    {%- endif -%}
+                    {{ {'ts': result.ts, 'source': result.source, 'in_window': result.in_window, 'window_checked': result.window_checked,
+                        'why': result.why, 'shifted': result.shifted} }}
+              - variables:
+                  plan_ts: "{{ plan_result.ts | float(0) }}"
+                  plan_details: >-
+                    {%- set ts = plan_result.ts | float(0) -%}
+                    {%- set items = fc_items -%}
+                    {%- set tmin = min_mowing_temperature_c | float(10) -%}
+                    {%- set tmax = max_mowing_temperature_c | float(25) -%}
+                    {%- set wet = wet_grass_humidity_percent | float(88) -%}
+                    {%- set block = forecast_rain_block_mm | float(0.2) -%}
+                    {%- set high = high_rain_probability_percent | float(60) -%}
+                    {%- set dry_s = (dry_after_rain_hours | float(3)) * 3600 -%}
+                    {%- set horizon_s = (forecast_dry_horizon_hours | float(3)) * 3600 -%}
+                    {%- set fc = namespace(seen=false, rain=0, prob=0, temp=none, hum=none, bad=false, conf=70, cond='', wet=false, spread=none) -%}
+                    {%- set rec = namespace(rain=0, bad=false, heavy=0) -%}
+                    {%- set fut = namespace(seen=0, rain=0, prob=0, unsafe=false) -%}
+                    {%- for it in items -%}
+                      {%- if it.t <= ts -%}
+                        {%- if it.t > ts - 3600 -%}
+                          {%- set fc.seen = true -%}
+                          {%- set fc.rain = it.rain -%}
+                          {%- set fc.prob = it.prob -%}
+                          {%- set fc.temp = it.temp -%}
+                          {%- set fc.hum = it.hum -%}
+                          {%- set fc.wet = it.wet -%}
+                          {%- set fc.spread = it.spread -%}
+                          {%- set fc.bad = it.bad -%}
+                          {%- set fc.conf = it.conf -%}
+                          {%- set fc.cond = it.cond -%}
+                        {%- endif -%}
+                        {%- if it.t > ts - dry_s -%}
+                          {%- set rec.rain = rec.rain + it.rain -%}
+                          {%- if it.bad -%}
+                            {%- set rec.bad = true -%}
+                          {%- endif -%}
+                        {%- endif -%}
+                        {%- if it.t > ts - 2 * dry_s -%}
+                          {%- set rec.heavy = rec.heavy + it.rain -%}
+                        {%- endif -%}
+                      {%- elif it.t <= ts + horizon_s -%}
+                        {%- set fut.seen = fut.seen + 1 -%}
+                        {%- set fut.rain = fut.rain + it.rain -%}
+                        {%- if it.prob > fut.prob -%}
+                          {%- set fut.prob = it.prob -%}
+                        {%- endif -%}
+                        {%- if it.bad
+                            or (it.temp is not none and (it.temp < tmin or it.temp > tmax))
+                            or it.wet -%}
+                          {%- set fut.unsafe = true -%}
+                        {%- endif -%}
+                      {%- endif -%}
+                    {%- endfor -%}
+                    {%- set rec_wet = rec.rain > block or rec.bad or rec.heavy > (max_rain_24h_mm | float(3)) -%}
+                    {%- set safe = fc.seen
+                        and fut.seen >= (forecast_min_future_hours | int(2))
+                        and (fc.temp is none or (fc.temp >= tmin and fc.temp <= tmax))
+                        and not fc.wet
+                        and (fc.rain + fut.rain) <= block and not fc.bad
+                        and fc.prob <= high and fut.prob <= high
+                        and not rec_wet and not fut.unsafe -%}
+                    {{ {'seen': fc.seen, 'safe': safe, 'rain': fc.rain, 'fut_rain': fut.rain,
+                        'prob': [fc.prob, fut.prob] | max, 'temp': fc.temp, 'hum': fc.hum,
+                        'cond': fc.cond, 'conf': fc.conf, 'rec_wet': rec_wet, 'wet': fc.wet,
+                        'spread': fc.spread, 'fut_unsafe': fut.unsafe} }}
+              - action: input_datetime.set_datetime
+                alias: Save the calculated mowing time
+                target:
+                  entity_id: !input next_mow_helper
+                data:
+                  timestamp: "{{ plan_ts | float(0) | int }}"
+              - variables:
+                  plan_is_today: >-
+                    {{ ((plan_ts | float(0)) | as_datetime | as_local).date() == now().date() }}
+                  plan_label: >-
+                    {% set local = (plan_ts | float(0)) | as_datetime | as_local %}
+                    {% set days = (local.date() - now().date()).days %}
+                    {% set names = {0: 'Monday', 1: 'Tuesday', 2: 'Wednesday', 3: 'Thursday', 4: 'Friday', 5: 'Saturday', 6: 'Sunday'} %}
+                    {% if days <= 0 %}today at {{ local.strftime('%H:%M') }}
+                    {% elif days == 1 %}tomorrow at {{ local.strftime('%H:%M') }}
+                    {% else %}{{ names[local.weekday()] }} {{ local.strftime('%d.%m') }} at {{ local.strftime('%H:%M') }}{% endif %}
+                  plan_config_problem: >-
+                    {{ mowing_window_preset == 'night' and not (fiatlux_installed | bool) }}
+                  plan_confirmed: >-
+                    {{ plan_details.seen and plan_details.safe and (plan_config_problem | string | lower) != 'true' }}
+                  plan_heading: >-
+                    {% if (plan_confirmed | string | lower) == 'true' %}
+                      Mowing time: {{ plan_label | trim }}
+                    {% else %}
+                      Next check: {{ plan_label | trim }}
+                    {% endif %}
+                  plan_reason: >-
+                    {% set d = plan_details %}
+                    {% set bad = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'snowy', 'hail'] %}
+                    {% set tmin = min_mowing_temperature_c | float(10) %}
+                    {% set tmax = max_mowing_temperature_c | float(25) %}
+                    {% if (plan_confirmed | string | lower) == 'true' %}
+                      {{ '' }}
+                    {% elif (plan_config_problem | string | lower) == 'true' %}
+                      change the mowing window or confirm the FiatLux accessory in the automation settings
+                    {% elif (forecast_available | string | lower) != 'true' or planning_mode != 'auto' %}
+                      without an hourly forecast, conditions can only be checked at start time
+                    {% elif fc_items | length == 0 %}
+                      the weather forecast is temporarily unavailable, so conditions will be checked at start time
+                    {% elif not d.seen and (plan_constraint | trim) == 'growth' %}
+                      grass will reach the mowing threshold around {{ ((growth_ready_ts | float(0)) | as_datetime | as_local).strftime('%d.%m') }}, and the forecast does not reach that day yet
+                    {% elif not d.seen %}
+                      the forecast for the next few days has no dry slot; conditions will be re-evaluated once the forecast covers that day
+                    {% elif (d.rain + d.fut_rain) > (forecast_rain_block_mm | float(0.2)) or d.cond in bad %}
+                      the forecast predicts rain during mowing, and there is no better time in the next few days
+                    {% elif d.prob > (high_rain_probability_percent | float(60)) %}
+                      high risk of rain ({{ d.prob | round(0) | int }}%), and there is no better time in the next few days
+                    {% elif d.rec_wet %}
+                      the grass may still be wet after rain, and there is no better time in the next few days
+                    {% elif d.wet and d.spread is not none %}
+                      in the forecast the air is only {{ d.spread | round(1) | string | replace('.', '.') }} °C warmer than the dew point (humidity {{ (d.hum | round(0) | int) if d.hum is not none else '?' }}%), so the grass may still be wet from dew
+                    {% elif d.wet %}
+                      high air humidity ({{ (d.hum | round(0) | int) if d.hum is not none else '?' }}%), so the grass may be wet from dew
+                    {% elif d.temp is not none and (d.temp < tmin or d.temp > tmax) %}
+                      forecast temperature {{ d.temp | round(0) | int }} °C is outside the allowed range {{ tmin | int }}–{{ tmax | int }} °C
+                    {% else %}
+                      the forecast does not confirm good conditions for the whole mowing time
+                    {% endif %}
+                  plan_window_note: >-
+                    {% set r = plan_result %}
+                    {% set window = (primary_start_time_value | trim)[:5] ~ '–' ~ (backup_start_time_value | trim)[:5] %}
+                    {% set names = {'rain': 'rain', 'wet_after_rain': 'wet grass after rain',
+                                    'dew': 'dew', 'temperature': 'temperature out of range ' ~ (min_mowing_temperature_c | int) ~ '–' ~ (max_mowing_temperature_c | int) ~ ' °C',
+                                    'data': 'forecast too short', 'later': 'weather getting worse during mowing'} %}
+                    {% if (plan_confirmed | string | lower) != 'true' or r.in_window or planning_mode != 'auto' or r.source != 'forecast' %}
+                      {{ '' }}
+                    {% elif r.shifted %}
+                      outside the {{ window }} window, because mowing is allowed only on selected days or in daylight
+                    {% elif r.window_checked and (r.why | length) > 0 %}
+                      {% set labels = namespace(items=[]) %}
+                      {% for key in r.why %}{% set labels.items = labels.items + [names.get(key, key)] %}{% endfor %}
+                      outside the {{ window }} window, because in the window the forecast shows: {{ labels.items | join(', ') }}
+                    {% elif (plan_constraint | trim) == 'growth' %}
+                      outside the {{ window }} window, because the grass reaches the mowing threshold only after the window
+                    {% elif (plan_constraint | trim) == 'gap' %}
+                      outside the {{ window }} window, because the minimum gap since the last mowing ends after the window
+                    {% elif (plan_constraint | trim) == 'drying' %}
+                      outside the {{ window }} window, because the grass takes longer to dry after rain than the window lasts
+                    {% else %}
+                      outside the {{ window }} window, because the window for today has already passed or has no safe time
+                    {% endif %}
+                  plan_forecast_line: >-
+                    {% set d = plan_details %}
+                    {% set names = {
+                      'clear-night': 'clear',
+                      'cloudy': 'cloudy',
+                      'exceptional': 'exceptional conditions',
+                      'fog': 'fog',
+                      'hail': 'hail',
+                      'lightning': 'thunderstorms',
+                      'lightning-rainy': 'thunderstorms with rain',
+                      'partlycloudy': 'partly cloudy',
+                      'pouring': 'heavy rain',
+                      'rainy': 'rain',
+                      'snowy': 'snow',
+                      'snowy-rainy': 'sleet',
+                      'sunny': 'sunny',
+                      'windy': 'windy',
+                      'windy-variant': 'windy'
+                    } %}
+                    {% if d.seen %}
+                      {% set parts = namespace(items=[]) %}
+                      {% if d.cond %}{% set parts.items = parts.items + [names.get(d.cond, d.cond)] %}{% endif %}
+                      {% if d.temp is not none %}{% set parts.items = parts.items + [(d.temp | round(0) | int) ~ ' °C'] %}{% endif %}
+                      {% set rain_total = d.rain + d.fut_rain %}
+                      {% if rain_total > (forecast_rain_block_mm | float(0.2)) %}
+                        {% set parts.items = parts.items + ['rain ' ~ (rain_total | round(1) | string | replace('.', '.')) ~ ' mm'] %}
+                      {% else %}
+                        {% set parts.items = parts.items + ['no rain'] %}
+                      {% endif %}
+                      {% if d.prob >= 30 %}{% set parts.items = parts.items + ['rain risk ' ~ (d.prob | round(0) | int) ~ '%'] %}{% endif %}
+                      {% if d.hum is not none %}{% set parts.items = parts.items + ['humidity ' ~ (d.hum | round(0) | int) ~ '%'] %}{% endif %}
+                      {{ parts.items | join(', ') }}
+                    {% else %}
+                      {{ '' }}
+                    {% endif %}
+                  plan_summary: |-
+                    {{ plan_heading | trim }}
+                    {% if (plan_reason | trim | length) > 0 %}Reason: {{ plan_reason | trim }}.
+                    {% endif %}{% if (plan_window_note | trim | length) > 0 %}Time {{ plan_window_note | trim }}.
+                    {% endif %}{% if (plan_forecast_line | trim | length) > 0 %}Forecast: {{ plan_forecast_line | trim }}.{% endif %}
+                  growth_line: >-
+                    Grass: {{ plan_growth_mm | float(0) | round(1) | string | replace('.', '.') }} mm (mowing threshold {{ growth_threshold_mm | float(3) | round(1) | string | replace('.', '.') }} mm)
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ plan_kind == 'daily' }}"
+                    sequence:
+                      - variables:
+                          tytul: "Worx: mowing plan"
+                          tresc: |-
+                            {{ plan_summary | trim }}
+                            {{ growth_line | trim }}, grew {{ growth_daily_mm | float(0) | round(1) | string | replace('.', '.') }} mm today.
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: "{{ notification_id }}"
+                          title: "{{ tytul }}"
+                          message: "{{ tresc }}"
+                      - if:
+                          - condition: template
+                            value_template: "{{ notify_daily_plan }}"
+                        then:
+                          - sequence: !input notify_actions
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ plan_kind == 'blocked' }}"
+                    sequence:
+                      - variables:
+                          tytul: "Worx: mowing postponed"
+                          tresc: |-
+                            Mowing planned for {{ plan_event.get('planned_label', '') }} was not started.
+                            Cause: {{ plan_event.get('reason', '') }}.
+
+                            {{ plan_summary | trim }}
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: "{{ notification_id }}"
+                          title: "{{ tytul }}"
+                          message: "{{ tresc }}"
+                      - sequence: !input notify_actions
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ plan_kind == 'interrupted' }}"
+                    sequence:
+                      - variables:
+                          tytul: "Worx: mowing interrupted"
+                          tresc: |-
+                            Mowing started on {{ plan_event.get('started_at', '') }} was interrupted on {{ plan_event.get('finished_at', '') }}.
+                            Cause: {{ plan_event.get('reason', '') }}.{% if (plan_event.get('growth_note', '') | length) > 0 %}
+                            {{ plan_event.get('growth_note') }}{% endif %}
+
+                            {{ plan_summary | trim }}
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: "{{ notification_id }}"
+                          title: "{{ tytul }}"
+                          message: "{{ tresc }}"
+                      - sequence: !input notify_actions
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ plan_kind in ['completed', 'manual_completed'] }}"
+                    sequence:
+                      - variables:
+                          tytul: >-
+                            {{ 'Worx: manual mowing finished' if plan_kind == 'manual_completed' else 'Worx: mowing finished' }}
+                          tresc: |-
+                            Mowing ran from {{ plan_event.get('started_at', '') }} to {{ plan_event.get('finished_at', '') }} ({{ plan_event.get('duration_label', '') }} including charging).
+
+                            {{ plan_summary | trim }}
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: "{{ notification_id }}"
+                          title: "{{ tytul }}"
+                          message: "{{ tresc }}"
+                      - sequence: !input notify_actions
+      - alias: Recalculate growth and plan mowing (without forecast)
+        conditions:
+          - condition: template
+            value_template: "{{ trigger.id in ['update_growth', 'replan'] }}"
+        sequence:
+          - sequence: *plan_sequence
+      - alias: Start the planned mowing cycle
+        conditions:
+          - condition: template
+            value_template: >-
+              {% set planned = state_attr(next_mow_helper, 'timestamp') | float(0) %}
+              {% set diff = as_timestamp(now()) - planned %}
+              {% set grace = (missed_start_grace_minutes | int(30)) * 60 %}
+              {{ trigger.id in ['start_scheduled', 'start_due_check']
+                 and (cycle_running | string | lower) != 'true'
+                 and planned > 0
+                 and ((trigger.id == 'start_scheduled' and diff >= -60 and diff <= grace)
+                      or (trigger.id == 'start_due_check' and diff >= 60 and diff <= grace)) }}
+        sequence:
+          - variables:
+              planned_start_label: >-
+                {% set local = (state_attr(next_mow_helper, 'timestamp') | float(0)) | as_datetime | as_local %}
+                {% set days = (local.date() - now().date()).days %}
+                {{ {0: 'today', 1: 'tomorrow', -1: 'yesterday'}.get(days, local.strftime('%d.%m')) ~ ' at ' ~ local.strftime('%H:%M') }}
+          - if:
+              - condition: template
+                alias: Mowing start is blocked
+                value_template: "{{ (start_block_reason | trim | length) > 0 }}"
+            then:
+              - event: worx_smart_mowing_replan
+                event_data:
+                  mower_entity: "{{ mower_entity }}"
+                  kind: blocked
+                  reason: "{{ start_block_reason | trim }}"
+                  planned_label: "{{ planned_start_label | trim }}"
+                  min_delay_minutes: "{{ start_block_delay_minutes | int(60) }}"
+              - stop: Mowing conditions are not met; a new time has been set.
+          - variables:
+              mowing_cycle_started_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+              mowing_cycle_started_ts: "{{ as_timestamp(now()) }}"
+          - action: worx_vision_cloud.start_one_time_mowing
+            alias: Start the edge cut only
+            data:
+              entity_id: !input mower_entity
+              runtime: 0
+              edge_cut: true
+              zones: []
+          - alias: Wait for confirmation that the mower left for the edge cut
+            repeat:
+              while:
+                - condition: template
+                  value_template: >-
+                    {{ states(mower_entity) in ['docked', 'paused']
+                       and (
+                         (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                          and not is_state(rain_binary_sensor, 'on'))
+                         or
+                         (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                          and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
+                          and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
+                       )
+                       and state_attr(mower_entity, 'rain_delay') != true
+                       and repeat.index <= ((mowing_start_confirm_timeout_minutes | int(5)) * 6) }}
+              sequence:
+                - delay: "00:00:10"
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                      and is_state(rain_binary_sensor, 'on'))
+                     or
+                     (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                      and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                           or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                     or state_attr(mower_entity, 'rain_delay') == true }}
+            then:
+              - action: lawn_mower.dock
+                continue_on_error: true
+                target:
+                  entity_id: !input mower_entity
+              - event: worx_smart_mowing_replan
+                event_data:
+                  mower_entity: "{{ mower_entity }}"
+                  kind: blocked
+                  reason: rain or rain delay at the start of the edge cut
+                  planned_label: "{{ planned_start_label | trim }}"
+                  min_delay_minutes: 0
+              - stop: Edge cut interrupted by rain.
+          - if:
+              - condition: template
+                value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
+            then:
+              - action: worx_vision_cloud.start_one_time_mowing
+                alias: Retry the edge cut only
+                data:
+                  entity_id: !input mower_entity
+                  runtime: 0
+                  edge_cut: true
+                  zones: []
+              - alias: Wait for confirmation of the second edge cut start
+                repeat:
+                  while:
+                    - condition: template
+                      value_template: >-
+                        {{ states(mower_entity) in ['docked', 'paused']
+                           and (
+                             (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                              and not is_state(rain_binary_sensor, 'on'))
+                             or
+                             (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                              and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
+                              and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
+                           )
+                           and state_attr(mower_entity, 'rain_delay') != true
+                           and repeat.index <= ((mowing_start_confirm_timeout_minutes | int(5)) * 6) }}
+                  sequence:
+                    - delay: "00:00:10"
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                      and is_state(rain_binary_sensor, 'on'))
+                     or
+                     (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                      and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                           or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                     or state_attr(mower_entity, 'rain_delay') == true }}
+            then:
+              - action: lawn_mower.dock
+                continue_on_error: true
+                target:
+                  entity_id: !input mower_entity
+              - event: worx_smart_mowing_replan
+                event_data:
+                  mower_entity: "{{ mower_entity }}"
+                  kind: blocked
+                  reason: rain or rain delay during the edge cut restart
+                  planned_label: "{{ planned_start_label | trim }}"
+                  min_delay_minutes: 0
+              - stop: Edge cut interrupted by rain after the retry.
+          - if:
+              - condition: template
+                value_template: "{{ states(mower_entity) in ['docked', 'paused', 'unavailable', 'unknown'] }}"
+            then:
+              - event: worx_smart_mowing_replan
+                event_data:
+                  mower_entity: "{{ mower_entity }}"
+                  kind: blocked
+                  reason: >-
+                    mower did not leave for the edge cut despite two commands (state: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }})
+                  planned_label: "{{ planned_start_label | trim }}"
+                  min_delay_minutes: 30
+              - stop: Edge cut start not confirmed after two attempts.
+          - variables:
+              tytul: "Worx: mowing started"
+              tresc: |-
+                Mowing started on {{ mowing_cycle_started_at }}.
+                The mower will first cut the edges, then charge the battery to {{ post_edge_battery_percent }}% and mow the whole lawn.
+          - action: persistent_notification.create
+            data:
+              notification_id: "{{ notification_id }}"
+              title: "{{ tytul }}"
+              message: "{{ tresc }}"
+          - sequence: !input notify_actions
+          - sequence: &after_edges_cycle
+              - wait_template: >-
+                  {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                      and is_state(rain_binary_sensor, 'on'))
+                     or
+                     (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                      and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                           or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                     or state_attr(mower_entity, 'rain_delay') == true
+                     or is_state(mower_entity, 'docked')
+                     or (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60)
+                     or (garden_check_enabled and garden_sensors | select('is_state', 'on') | list | length > 0) }}
+                alias: Wait for the edge cut to finish and the mower to return to the dock
+                timeout: "02:00:00"
+                continue_on_timeout: true
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ ((states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                           and not is_state(rain_binary_sensor, 'on'))
+                          or
+                          (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                           and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
+                           and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                         and state_attr(mower_entity, 'rain_delay') != true
+                         and not (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60) }}
+                then:
+                  - delay: "00:01:00"
+                    alias: Stabilize the dock confirmation after the edge cut
+                  - wait_template: >-
+                      {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                          and is_state(rain_binary_sensor, 'on'))
+                         or
+                         (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                          and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                               or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                         or state_attr(mower_entity, 'rain_delay') == true
+                         or is_state(mower_entity, 'docked') }}
+                    alias: Confirm a stable return to the dock after the edge cut
+                    timeout: "00:02:00"
+                    continue_on_timeout: true
+              - choose:
+                  - conditions:
+                      - condition: template
+                        alias: Someone entered the garden during the edge cut
+                        value_template: "{{ (garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)) }}"
+                    sequence:
+                      - if:
+                          - condition: template
+                            value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown', 'error'] }}"
+                        then:
+                          - action: lawn_mower.dock
+                            continue_on_error: true
+                            target:
+                              entity_id: !input mower_entity
+                      - event: worx_smart_mowing_replan
+                        event_data:
+                          mower_entity: "{{ mower_entity }}"
+                          kind: interrupted
+                          reason: someone entered the garden during the edge cut
+                          started_at: "{{ mowing_cycle_started_at }}"
+                          finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                          min_delay_minutes: 30
+                      - stop: Someone entered the garden during the edge cut.
+                  - conditions:
+                      - condition: template
+                        value_template: >-
+                          {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                              and is_state(rain_binary_sensor, 'on'))
+                             or
+                             (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                              and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                                   or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                             or state_attr(mower_entity, 'rain_delay') == true }}
+                    sequence:
+                      - if:
+                          - condition: template
+                            value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown', 'error'] }}"
+                        then:
+                          - action: lawn_mower.dock
+                            continue_on_error: true
+                            target:
+                              entity_id: !input mower_entity
+                      - event: worx_smart_mowing_replan
+                        event_data:
+                          mower_entity: "{{ mower_entity }}"
+                          kind: interrupted
+                          reason: rain interrupted the edge cut
+                          started_at: "{{ mowing_cycle_started_at }}"
+                          finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                          min_delay_minutes: 0
+                      - stop: Rain interrupted the edge cut stage.
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ is_state(mower_entity, 'error') }}"
+                    sequence:
+                      - event: worx_smart_mowing_replan
+                        event_data:
+                          mower_entity: "{{ mower_entity }}"
+                          kind: interrupted
+                          reason: >-
+                            {% set raw = state_attr(mower_entity, 'error_description') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}mower reported an error{% if raw %}: {{ mower_error_names.get(raw | lower, raw) }} ({{ raw }}){% endif %}. Check the mower on the lawn
+                          started_at: "{{ mowing_cycle_started_at }}"
+                          finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                          min_delay_minutes: 120
+                      - stop: Mower reported an error during the edge cut.
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ not is_state(mower_entity, 'docked') }}"
+                    sequence:
+                      - if:
+                          - condition: template
+                            value_template: "{{ states(mower_entity) not in ['unavailable', 'unknown'] }}"
+                        then:
+                          - action: lawn_mower.dock
+                            continue_on_error: true
+                            target:
+                              entity_id: !input mower_entity
+                      - event: worx_smart_mowing_replan
+                        event_data:
+                          mower_entity: "{{ mower_entity }}"
+                          kind: interrupted
+                          reason: Worx Cloud did not confirm that the mower returned to the dock after the edge cut
+                          started_at: "{{ mowing_cycle_started_at }}"
+                          finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                          min_delay_minutes: 30
+                      - stop: Worx Cloud did not confirm the return to the dock after the edge cut.
+              - wait_template: >-
+                  {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                      and is_state(rain_binary_sensor, 'on'))
+                     or
+                     (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                      and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                           or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                     or state_attr(mower_entity, 'rain_delay') == true
+                     or not is_state(mower_entity, 'docked')
+                     or (states(battery_sensor) | float(0)) >= (post_edge_battery_percent | float(80)) }}
+                alias: Wait at the dock for the battery to charge before normal mowing
+                timeout: "08:00:00"
+                continue_on_timeout: true
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: >-
+                          {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                              and is_state(rain_binary_sensor, 'on'))
+                             or
+                             (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                              and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                                   or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                             or state_attr(mower_entity, 'rain_delay') == true }}
+                    sequence:
+                      - event: worx_smart_mowing_replan
+                        event_data:
+                          mower_entity: "{{ mower_entity }}"
+                          kind: interrupted
+                          reason: after the edge cut, it started raining while charging
+                          started_at: "{{ mowing_cycle_started_at }}"
+                          finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                          min_delay_minutes: 0
+                      - stop: It started raining after the edge cut.
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ not is_state(mower_entity, 'docked') }}"
+                    sequence:
+                      - event: worx_smart_mowing_replan
+                        event_data:
+                          mower_entity: "{{ mower_entity }}"
+                          kind: interrupted
+                          reason: >-
+                            {% if is_state(mower_entity, 'error') %}{% set raw = state_attr(mower_entity, 'error_description') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}mower reported an error{% if raw %}: {{ mower_error_names.get(raw | lower, raw) }} ({{ raw }}){% endif %}. Check the mower on the lawn{% else %}mower left the dock while charging after the edge cut (state: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}){% endif %}
+                          started_at: "{{ mowing_cycle_started_at }}"
+                          finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                          min_delay_minutes: 30
+                      - stop: Mower left the dock while charging after the edge cut.
+                  - conditions:
+                      - condition: template
+                        value_template: >-
+                          {{ (states(battery_sensor) | float(0)) < (post_edge_battery_percent | float(80)) }}
+                    sequence:
+                      - event: worx_smart_mowing_replan
+                        event_data:
+                          mower_entity: "{{ mower_entity }}"
+                          kind: interrupted
+                          reason: >-
+                            battery did not charge to {{ post_edge_battery_percent }}% within 8 hours (currently {{ states(battery_sensor) }}%)
+                          started_at: "{{ mowing_cycle_started_at }}"
+                          finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                          min_delay_minutes: 60
+                      - stop: Battery did not charge to the required level after the edge cut.
+              - variables:
+                  temperature_after_edges_available: >-
+                    {% if temperature_source_entity.split('.')[0] == 'weather' %}
+                      {{ state_attr(temperature_source_entity, 'temperature') is not none }}
+                    {% else %}
+                      {{ states(temperature_source_entity) not in ['unknown', 'unavailable', 'none', ''] }}
+                    {% endif %}
+                  temperature_after_edges_c: >-
+                    {% if temperature_source_entity.split('.')[0] == 'weather' %}
+                      {{ state_attr(temperature_source_entity, 'temperature') | float(-99) }}
+                    {% else %}
+                      {{ states(temperature_source_entity) | float(-99) }}
+                    {% endif %}
+                  humidity_after_edges: >-
+                    {% set selected_humidity = outdoor_humidity_sensor | default('', true) %}
+                    {% if selected_humidity | length > 0 and states(selected_humidity) not in ['unknown', 'unavailable', 'none', ''] %}
+                      {{ states(selected_humidity) | float(-1) }}
+                    {% elif (forecast_weather_entity | trim | length) > 0 and state_attr(forecast_weather_entity | trim, 'humidity') is not none %}
+                      {{ state_attr(forecast_weather_entity | trim, 'humidity') | float(-1) }}
+                    {% else %}
+                      -1
+                    {% endif %}
+              - variables:
+                  spread_after_edges: >-
+                    {% set t = temperature_after_edges_c | float(-99) %}
+                    {% set rh = humidity_after_edges | float(-1) %}
+                    {% if t > -90 and rh > 0 %}
+                      {% set g = (([rh, 100] | min) / 100) | log + 17.62 * t / (243.12 + t) %}
+                      {{ (t - 243.12 * g / (17.62 - g)) | round(1) }}
+                    {% else %}
+                      99
+                    {% endif %}
+              - variables:
+                  post_edge_block_code: >-
+                    {% if (temperature_after_edges_available | string | lower) != 'true' %}sensor
+                    {% elif (temperature_after_edges_c | float(-99)) < (min_mowing_temperature_c | float(10))
+                          or (temperature_after_edges_c | float(-99)) > (max_mowing_temperature_c | float(25)) %}temperature
+                    {% elif states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                          and (smart_weather_rain_rate_available | string | lower) != 'true' %}sensor
+                    {% elif state_attr(mower_entity, 'rain_delay') == true %}rain_delay
+                    {% elif (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                               and is_state(rain_binary_sensor, 'on'))
+                          or
+                          (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                           and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                                or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])) %}rain
+                    {% elif (spread_after_edges | float(99)) < (min_dew_point_spread_c | float(2.5)) %}humidity
+                    {% elif (garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)) %}garden
+                    {% elif not is_state(mower_entity, 'docked')
+                          or (states(battery_sensor) | float(0)) < (post_edge_battery_percent | float(80)) %}mower
+                    {% else %}{{ '' }}{% endif %}
+              - variables:
+                  post_edge_block_reason: >-
+                    {% set code = post_edge_block_code | trim %}
+                    {% if code == 'sensor' and (temperature_after_edges_available | string | lower) != 'true' %}
+                      after the edge cut, cannot read the current outdoor temperature
+                    {% elif code == 'sensor' %}
+                      after the edge cut, cannot read the current rain state from either the sensor or MeteoFusion HA
+                    {% elif code == 'temperature' and (temperature_after_edges_c | float(-99)) < (min_mowing_temperature_c | float(10)) %}
+                      after the edge cut the temperature dropped to {{ temperature_after_edges_c | float | round(0) | int }} °C, and the minimum for mowing is {{ min_mowing_temperature_c | int }} °C
+                    {% elif code == 'temperature' %}
+                      after the edge cut the temperature rose to {{ temperature_after_edges_c | float | round(0) | int }} °C, and the maximum for mowing is {{ max_mowing_temperature_c | int }} °C
+                    {% elif code == 'rain_delay' %}
+                      after the edge cut, Worx Cloud still reports a rain delay
+                    {% elif code == 'rain' %}
+                      after the edge cut, local measurement or MeteoFusion HA shows ongoing rain
+                    {% elif code == 'humidity' %}
+                      after the edge cut the air is only {{ spread_after_edges | float(0) | round(1) | string | replace('.', '.') }} °C warmer than the dew point (humidity {{ humidity_after_edges | float | round(0) | int }}%), so the grass is still wet
+                    {% elif code == 'garden' %}
+                      someone is in the garden
+                    {% elif code == 'mower' %}
+                      before normal mowing the mower is not docked or the battery is below {{ post_edge_battery_percent }}% (state: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}, battery {{ states(battery_sensor) }}%)
+                    {% else %}
+                      {{ '' }}
+                    {% endif %}
+                  post_edge_block_delay_minutes: >-
+                    {% set code = post_edge_block_code | trim %}
+                    {% set with_forecast = (forecast_available | string | lower) == 'true' and planning_mode == 'auto' %}
+                    {{ {'sensor': 60, 'temperature': 30 if with_forecast else 60, 'rain_delay': 60, 'rain': 0, 'humidity': 60, 'garden': 30, 'mower': 30}.get(code, 30) }}
+              - if:
+                  - condition: template
+                    value_template: "{{ (post_edge_block_code | trim | length) > 0 }}"
+                then:
+                  - event: worx_smart_mowing_replan
+                    event_data:
+                      mower_entity: "{{ mower_entity }}"
+                      kind: interrupted
+                      reason: "{{ post_edge_block_reason | trim }}"
+                      started_at: "{{ mowing_cycle_started_at }}"
+                      finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                      min_delay_minutes: "{{ post_edge_block_delay_minutes | int(30) }}"
+                  - stop: Conditions after the edge cut do not allow normal mowing to start.
+              - action: worx_vision_cloud.start_one_time_mowing
+                alias: Start normal one-time mowing
+                data:
+                  entity_id: !input mower_entity
+                  runtime: "{{ normal_mowing_command_runtime_minutes }}"
+                  edge_cut: false
+                  zones: []
+              - alias: Wait for confirmation that the mower left to mow
+                repeat:
+                  while:
+                    - condition: template
+                      value_template: >-
+                        {{ states(mower_entity) in ['docked', 'paused']
+                           and (
+                             (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                              and not is_state(rain_binary_sensor, 'on'))
+                             or
+                             (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                              and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
+                              and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
+                           )
+                           and state_attr(mower_entity, 'rain_delay') != true
+                           and repeat.index <= ((mowing_start_confirm_timeout_minutes | int(5)) * 6) }}
+                  sequence:
+                    - delay: "00:00:10"
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                          and is_state(rain_binary_sensor, 'on'))
+                         or
+                         (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                          and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                               or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                         or state_attr(mower_entity, 'rain_delay') == true }}
+                then:
+                  - action: lawn_mower.dock
+                    continue_on_error: true
+                    target:
+                      entity_id: !input mower_entity
+                  - event: worx_smart_mowing_replan
+                    event_data:
+                      mower_entity: "{{ mower_entity }}"
+                      kind: interrupted
+                      reason: rain right before the mowing start
+                      started_at: "{{ mowing_cycle_started_at }}"
+                      finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                      min_delay_minutes: 0
+                  - stop: Mowing start interrupted by rain.
+              - if:
+                  - condition: template
+                    value_template: "{{ states(mower_entity) in ['docked', 'paused'] }}"
+                then:
+                  - action: worx_vision_cloud.start_one_time_mowing
+                    alias: Retry normal one-time mowing
+                    data:
+                      entity_id: !input mower_entity
+                      runtime: "{{ normal_mowing_command_runtime_minutes }}"
+                      edge_cut: false
+                      zones: []
+                  - alias: Wait for confirmation of the second mowing start
+                    repeat:
+                      while:
+                        - condition: template
+                          value_template: >-
+                            {{ states(mower_entity) in ['docked', 'paused']
+                               and (
+                                 (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                                  and not is_state(rain_binary_sensor, 'on'))
+                                 or
+                                 (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                                  and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
+                                  and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
+                               )
+                               and state_attr(mower_entity, 'rain_delay') != true
+                               and repeat.index <= ((mowing_start_confirm_timeout_minutes | int(5)) * 6) }}
+                      sequence:
+                        - delay: "00:00:10"
+              - if:
+                  - condition: template
+                    value_template: >-
+                      {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                          and is_state(rain_binary_sensor, 'on'))
+                         or
+                         (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                          and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                               or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                         or state_attr(mower_entity, 'rain_delay') == true }}
+                then:
+                  - action: lawn_mower.dock
+                    continue_on_error: true
+                    target:
+                      entity_id: !input mower_entity
+                  - event: worx_smart_mowing_replan
+                    event_data:
+                      mower_entity: "{{ mower_entity }}"
+                      kind: interrupted
+                      reason: rain during the mowing restart
+                      started_at: "{{ mowing_cycle_started_at }}"
+                      finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                      min_delay_minutes: 0
+                  - stop: Mowing start interrupted by rain after the retry.
+              - if:
+                  - condition: template
+                    value_template: "{{ states(mower_entity) in ['docked', 'paused', 'unavailable', 'unknown'] }}"
+                then:
+                  - event: worx_smart_mowing_replan
+                    event_data:
+                      mower_entity: "{{ mower_entity }}"
+                      kind: interrupted
+                      reason: >-
+                        mower did not start mowing despite two commands (state: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }})
+                      started_at: "{{ mowing_cycle_started_at }}"
+                      finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                      min_delay_minutes: 30
+                  - stop: Mowing start not confirmed after two attempts.
+              - sequence: &normal_mowing_cycle
+                  - variables:
+                      aborted_by_error: false
+                      aborted_error_text: ""
+                  - alias: Mow until the mower returns or the safety limit is reached
+                    repeat:
+                      while:
+                        - condition: template
+                          value_template: >-
+                            {% set mower_changed_ts = as_timestamp(states[mower_entity].last_changed) %}
+                            {% set battery_changed_ts = as_timestamp(states[battery_sensor].last_changed) %}
+                            {% set stable_since_ts = [mower_changed_ts, battery_changed_ts] | max %}
+                            {% set vision_complete = is_state(mower_entity, 'docked')
+                                and (states(battery_sensor) | float(0)) >= (vision_completion_battery_percent | float(95))
+                                and state_attr(mower_entity, 'rain_delay') != true
+                                and (as_timestamp(now()) - stable_since_ts) >= ((vision_completion_stable_minutes | int(15)) * 60) %}
+                            {% set completed = vision_complete if mower_cycle_type == 'vision_rtk'
+                                else is_state(mower_entity, 'docked') %}
+                            {{ ((states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                                 and not is_state(rain_binary_sensor, 'on'))
+                                or
+                                (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                                 and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
+                                 and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                               and state_attr(mower_entity, 'rain_delay') != true
+                               and not completed
+                               and not (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60)
+                               and not ((garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)))
+                               and not ((aborted_by_error | string | lower) == 'true' and is_state(mower_entity, 'docked'))
+                               and repeat.index <= (normal_mowing_monitor_limit_minutes | int(720)) }}
+                      sequence:
+                        - wait_for_trigger:
+                            - trigger: state
+                              entity_id: !input mower_entity
+                              to: error
+                          timeout: "00:01:00"
+                          continue_on_timeout: true
+                        - if:
+                            - condition: template
+                              value_template: "{{ wait.trigger is not none }}"
+                          then:
+                            - variables:
+                                seen_error_text: >-
+                                  {% set raw = wait.trigger.to_state.attributes.get('error_description', '') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}{{ (mower_error_names.get(raw | lower, raw) ~ ' (' ~ raw ~ ')') if raw else 'no description' }}
+                            - wait_template: "{{ states(mower_entity) in ['mowing', 'returning', 'docked'] }}"
+                              timeout: "00:03:00"
+                              continue_on_timeout: true
+                            - if:
+                                - condition: template
+                                  value_template: "{{ states(mower_entity) in ['returning', 'docked'] }}"
+                              then:
+                                - variables:
+                                    aborted_by_error: true
+                                    aborted_error_text: "{{ seen_error_text }}"
+                  - if:
+                      - condition: template
+                        alias: Mower reported an error during mowing
+                        value_template: "{{ (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60) }}"
+                    then:
+                      - variables:
+                          reduced_growth_mm: "{{ ((states(growth_helper) | float(0)) * 0.7) | round(1) }}"
+                      - action: input_number.set_value
+                        alias: Reduce growth after partial mowing
+                        target:
+                          entity_id: !input growth_helper
+                        data:
+                          value: "{{ reduced_growth_mm }}"
+                      - event: worx_smart_mowing_replan
+                        event_data:
+                          mower_entity: "{{ mower_entity }}"
+                          kind: interrupted
+                          reason: >-
+                            {% set raw = state_attr(mower_entity, 'error_description') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}mower reported an error{% if raw %}: {{ mower_error_names.get(raw | lower, raw) }} ({{ raw }}){% endif %}. Check the mower on the lawn
+                          started_at: "{{ mowing_cycle_started_at }}"
+                          finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                          growth_note: The lawn was mowed only partially, so the estimated grass growth was reduced by 30%.
+                          min_delay_minutes: 120
+                      - stop: Mower reported an error during mowing.
+                  - if:
+                      - condition: template
+                        alias: Someone entered the garden during mowing
+                        value_template: "{{ (garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)) }}"
+                    then:
+                      - if:
+                          - condition: template
+                            value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown', 'error'] }}"
+                          - condition: template
+                            value_template: "{{ garden_reaction != 'pause' }}"
+                        then:
+                          - action: lawn_mower.dock
+                            continue_on_error: true
+                            target:
+                              entity_id: !input mower_entity
+                      - variables:
+                          reduced_growth_mm: "{{ ((states(growth_helper) | float(0)) * 0.7) | round(1) }}"
+                      - action: input_number.set_value
+                        alias: Reduce growth after partial mowing
+                        target:
+                          entity_id: !input growth_helper
+                        data:
+                          value: "{{ reduced_growth_mm }}"
+                      - event: worx_smart_mowing_replan
+                        event_data:
+                          mower_entity: "{{ mower_entity }}"
+                          kind: interrupted
+                          reason: >-
+                            someone entered the garden{{ ' - the mower is waiting on the lawn, resume it manually or send it to the dock' if garden_reaction == 'pause' else '' }}
+                          started_at: "{{ mowing_cycle_started_at }}"
+                          finished_at: "{{ now().strftime('%d.%m at %H:%M') }}"
+                          growth_note: The lawn was mowed only partially, so the estimated grass growth was reduced by 30%.
+                          min_delay_minutes: 30
+                      - stop: Someone entered the garden during mowing.
+                  - variables:
+                      normal_mowing_finished_ts: >-
+                        {% if is_state(mower_entity, 'docked') %}
+                          {{ as_timestamp(states[mower_entity].last_changed) }}
+                        {% else %}
+                          {{ as_timestamp(now()) }}
+                        {% endif %}
+                  - if:
+                      - condition: template
+                        value_template: "{{ states(mower_entity) not in ['docked', 'paused', 'unavailable', 'unknown'] }}"
+                    then:
+                      - action: lawn_mower.dock
+                        continue_on_error: true
+                        target:
+                          entity_id: !input mower_entity
+                  - wait_template: >-
+                      {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                          and is_state(rain_binary_sensor, 'on'))
+                         or
+                         (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                          and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                               or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                         or state_attr(mower_entity, 'rain_delay') == true
+                         or is_state(mower_entity, 'docked') }}
+                    alias: Wait for the return to the dock after normal mowing
+                    timeout: "00:30:00"
+                    continue_on_timeout: true
+                  - if:
+                      - condition: template
+                        value_template: >-
+                          {{ ((states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                               and not is_state(rain_binary_sensor, 'on'))
+                              or
+                              (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                               and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
+                               and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                             and state_attr(mower_entity, 'rain_delay') != true }}
+                    then:
+                      - delay: "00:01:00"
+                        alias: Stabilize the dock confirmation after normal mowing
+                      - wait_template: >-
+                          {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                              and is_state(rain_binary_sensor, 'on'))
+                             or
+                             (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                              and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                                   or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                             or state_attr(mower_entity, 'rain_delay') == true
+                             or is_state(mower_entity, 'docked') }}
+                        alias: Confirm a stable return to the dock after normal mowing
+                        timeout: "00:02:00"
+                        continue_on_timeout: true
+                  - variables:
+                      mowing_cycle_finished_at: >-
+                        {{ (normal_mowing_finished_ts | float) | timestamp_custom('%d.%m at %H:%M', true) }}
+                      whole_cycle_duration_label: >-
+                        {% set total = ((((normal_mowing_finished_ts | float) - (mowing_cycle_started_ts | float)) / 60) | round(0)) | int %}
+                        {% if total >= 60 %}{{ total // 60 }} h {{ total % 60 }} min{% else %}{{ total }} min{% endif %}
+                      rain_after_mowing: >-
+                        {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                            and is_state(rain_binary_sensor, 'on'))
+                           or
+                           (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                            and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                                 or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                           or state_attr(mower_entity, 'rain_delay') == true }}
+                      mowing_completed: >-
+                        {% set mower_changed_ts = as_timestamp(states[mower_entity].last_changed) %}
+                        {% set battery_changed_ts = as_timestamp(states[battery_sensor].last_changed) %}
+                        {% set stable_since_ts = [mower_changed_ts, battery_changed_ts] | max %}
+                        {% set vision_complete = is_state(mower_entity, 'docked')
+                            and (states(battery_sensor) | float(0)) >= (vision_completion_battery_percent | float(95))
+                            and state_attr(mower_entity, 'rain_delay') != true
+                            and (as_timestamp(now()) - stable_since_ts) >= ((vision_completion_stable_minutes | int(15)) * 60) %}
+                        {% set rain_now = (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
+                            and is_state(rain_binary_sensor, 'on'))
+                            or (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
+                                and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
+                                     or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                            or state_attr(mower_entity, 'rain_delay') == true %}
+                        {{ not rain_now and (aborted_by_error | string | lower) != 'true'
+                           and (vision_complete if mower_cycle_type == 'vision_rtk' else is_state(mower_entity, 'docked')) }}
+                  - if:
+                      - condition: template
+                        value_template: "{{ (mowing_completed | string | lower) == 'true' }}"
+                    then:
+                      - action: input_datetime.set_datetime
+                        alias: Save the finished mowing as the last mowing
+                        target:
+                          entity_id: !input last_mow_helper
+                        data:
+                          timestamp: "{{ normal_mowing_finished_ts | float | int }}"
+                      - action: input_number.set_value
+                        alias: Reset growth after a full mowing
+                        target:
+                          entity_id: !input growth_helper
+                        data:
+                          value: 0
+                      - event: worx_smart_mowing_replan
+                        event_data:
+                          mower_entity: "{{ mower_entity }}"
+                          kind: completed
+                          started_at: "{{ mowing_cycle_started_at }}"
+                          finished_at: "{{ mowing_cycle_finished_at | trim }}"
+                          duration_label: "{{ whole_cycle_duration_label | trim }}"
+                          min_delay_minutes: 0
+                    else:
+                      - variables:
+                          reduced_growth_mm: "{{ ((states(growth_helper) | float(0)) * 0.7) | round(1) }}"
+                      - action: input_number.set_value
+                        alias: Reduce growth after partial mowing
+                        target:
+                          entity_id: !input growth_helper
+                        data:
+                          value: "{{ reduced_growth_mm }}"
+                      - event: worx_smart_mowing_replan
+                        event_data:
+                          mower_entity: "{{ mower_entity }}"
+                          kind: interrupted
+                          reason: >-
+                            {% if (rain_after_mowing | string | lower) == 'true' %}rain during mowing
+                            {%- elif (aborted_by_error | string | lower) == 'true' %}mower stopped mowing after an error: {{ aborted_error_text }} and returned to the dock
+                            {%- else %}mower did not confirm that it finished mowing and returned to the dock{% endif %}
+                          started_at: "{{ mowing_cycle_started_at }}"
+                          finished_at: "{{ mowing_cycle_finished_at | trim }}"
+                          growth_note: The lawn was mowed only partially, so the estimated grass growth was reduced by 30%.
+                          min_delay_minutes: >-
+                            {{ 0 if (rain_after_mowing | string | lower) == 'true' else (60 if (aborted_by_error | string | lower) == 'true' else 30) }}
+      - alias: Someone entered the garden - stop the mower
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ trigger.id == 'garden_entered' and garden_check_enabled
+                 and states(mower_entity) in ['mowing', 'returning'] }}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ garden_reaction == 'pause' and is_state(mower_entity, 'mowing') }}"
+            then:
+              - action: lawn_mower.pause
+                continue_on_error: true
+                target:
+                  entity_id: !input mower_entity
+            else:
+              - action: lawn_mower.dock
+                continue_on_error: true
+                target:
+                  entity_id: !input mower_entity
+      - alias: Track mowing started outside the automation
+        conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'external_mowing_started' }}"
+          - condition: template
+            value_template: "{{ (cycle_running | string | lower) != 'true' }}"
+          - condition: template
+            value_template: "{{ state_attr(mower_entity, 'rtk_at_station') != true }}"
+          - condition: template
+            value_template: "{{ state_attr(mower_entity, 'status_id') | int(-1) != 32 }}"
+        sequence:
+          - variables:
+              manual_mow_started_ts: "{{ as_timestamp(trigger.to_state.last_changed) }}"
+              manual_mow_started_at: >-
+                {{ as_timestamp(trigger.to_state.last_changed) | timestamp_custom('%d.%m at %H:%M', true) }}
+          - sequence: &manual_mowing_tracking
+              - variables:
+                  aborted_by_error: false
+                  aborted_error_text: ""
+              - alias: Monitor manual mowing, including Vision / RTK recharging
+                repeat:
+                  while:
+                    - condition: template
+                      value_template: >-
+                        {% set mower_changed_ts = as_timestamp(states[mower_entity].last_changed) %}
+                        {% set battery_changed_ts = as_timestamp(states[battery_sensor].last_changed) %}
+                        {% set stable_since_ts = [mower_changed_ts, battery_changed_ts] | max %}
+                        {% set vision_complete = is_state(mower_entity, 'docked')
+                            and (states(battery_sensor) | float(0)) >= (vision_completion_battery_percent | float(95))
+                            and state_attr(mower_entity, 'rain_delay') != true
+                            and (as_timestamp(now()) - stable_since_ts) >= ((vision_completion_stable_minutes | int(15)) * 60) %}
+                        {% set completed = vision_complete if mower_cycle_type == 'vision_rtk'
+                            else is_state(mower_entity, 'docked') %}
+                        {{ not completed
+                           and not (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60)
+                           and not ((garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)))
+                           and not ((aborted_by_error | string | lower) == 'true' and is_state(mower_entity, 'docked'))
+                           and repeat.index <= (normal_mowing_monitor_limit_minutes | int(720)) }}
+                  sequence:
+                    - wait_for_trigger:
+                        - trigger: state
+                          entity_id: !input mower_entity
+                          to: error
+                      timeout: "00:01:00"
+                      continue_on_timeout: true
+                    - if:
+                        - condition: template
+                          value_template: "{{ wait.trigger is not none }}"
+                      then:
+                        - variables:
+                            seen_error_text: >-
+                              {% set raw = wait.trigger.to_state.attributes.get('error_description', '') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}{{ (mower_error_names.get(raw | lower, raw) ~ ' (' ~ raw ~ ')') if raw else 'no description' }}
+                        - wait_template: "{{ states(mower_entity) in ['mowing', 'returning', 'docked'] }}"
+                          timeout: "00:03:00"
+                          continue_on_timeout: true
+                        - if:
+                            - condition: template
+                              value_template: "{{ states(mower_entity) in ['returning', 'docked'] }}"
+                          then:
+                            - variables:
+                                aborted_by_error: true
+                                aborted_error_text: "{{ seen_error_text }}"
+              - variables:
+                  manual_mow_completed: >-
+                    {% set mower_changed_ts = as_timestamp(states[mower_entity].last_changed) %}
+                    {% set battery_changed_ts = as_timestamp(states[battery_sensor].last_changed) %}
+                    {% set stable_since_ts = [mower_changed_ts, battery_changed_ts] | max %}
+                    {% set vision_complete = is_state(mower_entity, 'docked')
+                        and (states(battery_sensor) | float(0)) >= (vision_completion_battery_percent | float(95))
+                        and state_attr(mower_entity, 'rain_delay') != true
+                        and (as_timestamp(now()) - stable_since_ts) >= ((vision_completion_stable_minutes | int(15)) * 60) %}
+                    {% set garden = (garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)) %}
+                    {{ not garden and (aborted_by_error | string | lower) != 'true'
+                       and (vision_complete if mower_cycle_type == 'vision_rtk' else is_state(mower_entity, 'docked')) }}
+              - if:
+                  - condition: template
+                    value_template: "{{ (manual_mow_completed | string | lower) != 'true' }}"
+                then:
+                  - variables:
+                      tytul: "Worx: manual mowing interrupted"
+                      tresc: |-
+                        Mowing started manually on {{ manual_mow_started_at | trim }} did not finish as a full cycle.
+                        {% if garden_check_enabled and garden_sensors | select('is_state', 'on') | list | length > 0 %}Cause: someone is in the garden.{% elif (aborted_by_error | string | lower) == 'true' %}Cause: mower stopped mowing after an error: {{ aborted_error_text }} and returned to the dock.{% elif is_state(mower_entity, 'error') %}Cause: {% set raw = state_attr(mower_entity, 'error_description') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}mower reported an error{% if raw %}: {{ mower_error_names.get(raw | lower, raw) }} ({{ raw }}){% endif %}. Check the mower on the lawn.{% else %}Mower state: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}.{% endif %}
+                        Estimated grass growth remains unchanged: {{ states(growth_helper) | float(0) | round(1) | string | replace('.', '.') }} mm.
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: "{{ notification_id }}"
+                      title: "{{ tytul }}"
+                      message: "{{ tresc }}"
+                  - sequence: !input notify_actions
+                  - stop: Manual mowing was not confirmed as finished.
+              - variables:
+                  manual_mow_finished_ts: "{{ as_timestamp(states[mower_entity].last_changed) }}"
+              - action: input_datetime.set_datetime
+                alias: Save the manual mowing as the last mowing
+                target:
+                  entity_id: !input last_mow_helper
+                data:
+                  timestamp: "{{ manual_mow_finished_ts | float | int }}"
+              - action: input_number.set_value
+                alias: Reset growth after manual mowing
+                target:
+                  entity_id: !input growth_helper
+                data:
+                  value: 0
+              - event: worx_smart_mowing_replan
+                event_data:
+                  mower_entity: "{{ mower_entity }}"
+                  kind: manual_completed
+                  started_at: "{{ manual_mow_started_at | trim }}"
+                  finished_at: "{{ (manual_mow_finished_ts | float) | timestamp_custom('%d.%m at %H:%M', true) }}"
+                  duration_label: >-
+                    {% set total = ((((manual_mow_finished_ts | float) - (manual_mow_started_ts | float)) / 60) | round(0)) | int %}
+                    {% if total >= 60 %}{{ total // 60 }} h {{ total % 60 }} min{% else %}{{ total }} min{% endif %}
+                  min_delay_minutes: 0
+      - alias: Take over a running cycle after a Home Assistant restart
+        conditions:
+          - condition: template
+            value_template: "{{ trigger.id == 'restart_recovery' and (cycle_running | string | lower) != 'true' }}"
+        sequence:
+          - wait_template: "{{ states(mower_entity) not in ['unavailable', 'unknown'] }}"
+            alias: Wait for the Worx Cloud connection
+            timeout: "00:10:00"
+            continue_on_timeout: true
+          - delay: "00:02:00"
+            alias: Stabilize the mower state after the restart
+          - if:
+              - condition: template
+                alias: Mower is not mowing
+                value_template: >-
+                  {{ states(mower_entity) not in ['mowing', 'returning']
+                     or state_attr(mower_entity, 'rtk_at_station') == true }}
+            then:
+              - stop: After the restart the mower is not mowing; there is no cycle to take over.
+          - variables:
+              restart_planned_ts: "{{ state_attr(next_mow_helper, 'timestamp') | float(0) }}"
+              restart_scheduled_cycle: >-
+                {% set planned = state_attr(next_mow_helper, 'timestamp') | float(0) %}
+                {% set now_ts = as_timestamp(now()) %}
+                {{ planned > 0 and planned <= now_ts
+                   and (state_attr(last_mow_helper, 'timestamp') | float(0)) < planned
+                   and (now_ts - planned) <= (normal_mowing_monitor_limit_minutes | int(720)) * 60 }}
+          - variables:
+              restart_edge_phase: >-
+                {{ (restart_scheduled_cycle | string | lower) == 'true'
+                   and (state_attr(mower_entity, 'status_id') | int(-1) == 32
+                        or (is_state(mower_entity, 'returning')
+                            and as_timestamp(now()) - (restart_planned_ts | float(0)) < 3600)) }}
+              mowing_cycle_started_ts: "{{ restart_planned_ts }}"
+              mowing_cycle_started_at: "{{ (restart_planned_ts | float(0)) | timestamp_custom('%d.%m at %H:%M', true) }}"
+          - choose:
+              - conditions:
+                  - condition: template
+                    alias: Restart during the edge cut
+                    value_template: "{{ (restart_edge_phase | string | lower) == 'true' }}"
+                sequence:
+                  - sequence: *after_edges_cycle
+              - conditions:
+                  - condition: template
+                    alias: Restart during normal scheduled mowing
+                    value_template: "{{ (restart_scheduled_cycle | string | lower) == 'true' }}"
+                sequence:
+                  - sequence: *normal_mowing_cycle
+            default:
+              - variables:
+                  manual_mow_started_ts: "{{ as_timestamp(now()) }}"
+                  manual_mow_started_at: "{{ now().strftime('%d.%m at %H:%M') }} (taken over after a Home Assistant restart)"
+              - sequence: *manual_mowing_tracking

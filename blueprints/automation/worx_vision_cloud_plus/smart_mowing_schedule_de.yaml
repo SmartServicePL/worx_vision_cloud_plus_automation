@@ -19,9 +19,8 @@ blueprint:
 
     Wetterquelle:
     - eine eigene Wetterstation oder lokale Sensoren liefern echte Messwerte,
-    - die empfohlene Integration MeteoFusion HA liefert eine lokal korrigierte stündliche
-      Vorhersage, den aktuellen Niederschlag und eine Bewertung der Vorhersagequalität,
-    - du kannst auch eine andere weather-Entität verwenden, z. B. Tomorrow.io,
+    - die stündliche Vorhersage liefert jede weather-Entität in Home Assistant,
+      zum Beispiel Met.no (die eingebaute Vorhersage für Zuhause) oder Tomorrow.io,
     - alle Termine (Tagesplan, erneuter Versuch nach einer Sperre oder Unterbrechung,
       Termin nach abgeschlossenem Mähen) berechnet derselbe Planer, daher nennen Benachrichtigungen
       immer denselben, aktuellen Termin,
@@ -128,7 +127,7 @@ blueprint:
                 - domain: weather
         rain_source_entity:
           name: Gemessener Niederschlag
-          description: Sensor für die Niederschlagssumme des aktuellen Tages oder der letzten 24 Stunden oder eine weather-Entität. Wähle keine momentane Niederschlagsintensität. Bei MeteoFusion HA wird die Niederschlagssumme automatisch abgerufen.
+          description: Sensor mit der Regensumme des aktuellen Tages oder der letzten 24 Stunden oder eine weather-Entität. Nicht die aktuelle Regenrate wählen. Am besten eignet sich ein Sensor der Wetterstation, zum Beispiel der Regen der letzten 24 Stunden.
           selector:
             entity:
               filter:
@@ -136,7 +135,7 @@ blueprint:
                 - domain: weather
         forecast_weather_entity:
           name: Stündliche Vorhersage (optional)
-          description: Empfohlen wird eine weather-Entität aus der Integration MeteoFusion HA. Die Automatisierung wählt aus ihrer Vorhersage eine konkrete trockene Uhrzeit mit sicherer Temperatur und berechnet daraus die Wachstumsbedingungen des Grases für die nächsten 24 Stunden. Normale weather-Entitäten werden ebenfalls unterstützt, z. B. Tomorrow.io. Ohne Vorhersage wird das gewählte Zeitfenster verwendet, und die aktuellen Bedingungen werden beim Start geprüft.
+          description: weather-Entität mit stündlicher Vorhersage, zum Beispiel weather.forecast_home aus der eingebauten Integration Met.no oder Tomorrow.io. Die Automatisierung wählt aus dieser Vorhersage eine konkrete trockene Stunde mit sicherer Temperatur und berechnet daraus die Wachstumsbedingungen für die nächsten 24 Stunden. Ist der Regensensor der Wetterstation nicht verfügbar, erkennt sie über den Zustand dieser Entität auch laufenden Regen. Ohne Vorhersage wird das gewählte Zeitfenster genutzt und die aktuellen Bedingungen werden beim Start geprüft.
           default: ""
           selector:
             entity:
@@ -845,57 +844,6 @@ variables:
   forecast_available: >-
     {% set entity = forecast_weather_entity | trim %}
     {{ entity | length > 0 and states(entity) not in ['unavailable', 'unknown'] }}
-  smart_weather_context_available: >-
-    {% set entity = forecast_weather_entity | trim %}
-    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
-    {{ context is mapping and context.get('schema') == 'smart_service.weather.v1' }}
-  smart_weather_context_status: >-
-    {% set entity = forecast_weather_entity | trim %}
-    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
-    {% if context is mapping and context.get('schema') == 'smart_service.weather.v1' %}
-      {{ context.get('status', 'unknown') }}
-    {% else %}
-      unavailable
-    {% endif %}
-  smart_weather_context_usable: >-
-    {{ (smart_weather_context_available | string | lower) == 'true'
-       and (smart_weather_context_status | trim) in ['ready', 'degraded'] }}
-  smart_weather_current_temperature_available: >-
-    {% set entity = forecast_weather_entity | trim %}
-    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
-    {% set current = context.get('current', {}) if context is mapping else {} %}
-    {{ (smart_weather_context_usable | string | lower) == 'true'
-       and current is mapping
-       and current.get('temperature') is not none }}
-  smart_weather_current_temperature: >-
-    {% set entity = forecast_weather_entity | trim %}
-    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
-    {% set current = context.get('current', {}) if context is mapping else {} %}
-    {{ current.get('temperature', 0) | float(0) if current is mapping else 0 }}
-  smart_weather_rain_rate_available: >-
-    {% set entity = forecast_weather_entity | trim %}
-    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
-    {% set current = context.get('current', {}) if context is mapping else {} %}
-    {{ (smart_weather_context_usable | string | lower) == 'true'
-       and current is mapping
-       and current.get('rain_rate') is not none }}
-  smart_weather_rain_rate: >-
-    {% set entity = forecast_weather_entity | trim %}
-    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
-    {% set current = context.get('current', {}) if context is mapping else {} %}
-    {{ current.get('rain_rate', 0) | float(0) if current is mapping else 0 }}
-  smart_weather_rain_today_available: >-
-    {% set entity = forecast_weather_entity | trim %}
-    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
-    {% set current = context.get('current', {}) if context is mapping else {} %}
-    {{ (smart_weather_context_usable | string | lower) == 'true'
-       and current is mapping
-       and current.get('rain_today') is not none }}
-  smart_weather_rain_today: >-
-    {% set entity = forecast_weather_entity | trim %}
-    {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
-    {% set current = context.get('current', {}) if context is mapping else {} %}
-    {{ current.get('rain_today', 0) | float(0) if current is mapping else 0 }}
   model_capacity_m2_per_hour: >-
     {% set model = mower_model %}
     {% if model in ['wr202e_250'] %}60
@@ -921,7 +869,7 @@ variables:
     {% else %}
       {% set available = states(temperature_source_entity) not in ['unknown', 'unavailable', 'none', ''] %}
     {% endif %}
-    {{ available or (smart_weather_current_temperature_available | string | lower) == 'true' }}
+    {{ available }}
   temp_c: >-
     {% if temperature_source_entity.split('.')[0] == 'weather'
           and state_attr(temperature_source_entity, 'temperature') is not none %}
@@ -929,18 +877,13 @@ variables:
     {% elif temperature_source_entity.split('.')[0] != 'weather'
           and states(temperature_source_entity) not in ['unknown', 'unavailable', 'none', ''] %}
       {{ states(temperature_source_entity) | float(10) }}
-    {% elif (smart_weather_current_temperature_available | string | lower) == 'true' %}
-      {{ smart_weather_current_temperature | float(10) }}
     {% else %}
       10
     {% endif %}
   configured_rain_mm: >-
     {% if rain_source_entity.split('.')[0] == 'weather' %}
-      {% set attr_rain_today = state_attr(rain_source_entity, 'rain_today') %}
       {% set attr_rain = state_attr(rain_source_entity, 'precipitation') %}
-      {% if attr_rain_today is not none %}
-        {{ attr_rain_today | float(0) }}
-      {% elif attr_rain is not none %}
+      {% if attr_rain is not none %}
         {{ attr_rain | float(0) }}
       {% elif states(rain_source_entity) == 'pouring' %}
         8
@@ -954,26 +897,19 @@ variables:
     {% else %}
       {{ states(rain_source_entity) | float(0) }}
     {% endif %}
-  rain_mm: >-
-    {% set configured = configured_rain_mm | float(0) %}
-    {% set smart = smart_weather_rain_today | float(0)
-       if (smart_weather_rain_today_available | string | lower) == 'true'
-       else 0 %}
-    {{ [configured, smart] | max | round(2) }}
+  rain_mm: "{{ configured_rain_mm | float(0) | round(2) }}"
   local_rain_sensor_available: >-
     {{ states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', ''] }}
   rain_observation_available: >-
     {{ (local_rain_sensor_available | string | lower) == 'true'
-       or (smart_weather_rain_rate_available | string | lower) == 'true' }}
+       or (forecast_available | string | lower) == 'true' }}
   rain_active_now: >-
     {% set weather_entity = forecast_weather_entity | trim %}
     {% set wet_conditions = ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'] %}
     {% if (local_rain_sensor_available | string | lower) == 'true' %}
       {{ is_state(rain_binary_sensor, 'on') }}
     {% else %}
-      {{ ((smart_weather_rain_rate_available | string | lower) == 'true'
-          and (smart_weather_rain_rate | float(0)) > 0.05)
-         or (weather_entity | length > 0 and states(weather_entity) in wet_conditions) }}
+      {{ weather_entity | length > 0 and states(weather_entity) in wet_conditions }}
     {% endif %}
   rain_drying_hours: >-
     {% set base = dry_after_rain_hours | float(3) %}
@@ -1152,7 +1088,7 @@ variables:
     {% elif code == 'sensor' and (temperature_available | string | lower) != 'true' %}
       aktuelle Außentemperatur kann nicht gelesen werden
     {% elif code == 'sensor' %}
-      aktueller Niederschlagsstatus kann weder vom Sensor noch von MeteoFusion HA gelesen werden
+      der aktuelle Regenzustand kann weder vom Sensor noch von der Wetter-Entität gelesen werden
     {% elif code == 'temperature' and (temp_c | float) < (min_mowing_temperature_c | float) %}
       Temperatur beträgt {{ temp_c | float | round(0) | int }} °C, Minimum zum Mähen ist {{ min_mowing_temperature_c | int }} °C
     {% elif code == 'temperature' %}
@@ -1160,7 +1096,7 @@ variables:
     {% elif code == 'rain_delay' %}
       Worx Cloud meldet aktive Regenverzögerung
     {% elif code == 'rain' %}
-      lokale Messung oder MeteoFusion HA zeigt laufenden Niederschlag
+      die lokale Messung oder die Wetter-Entität meldet laufenden Regen
     {% elif code == 'drying' %}
       Gras trocknet nach Regen ab; sicherer Start frühestens um {{ (rain_drying_ready_ts | float(0)) | timestamp_custom('%H:%M', true) }}
     {% elif code == 'humidity' %}
@@ -1258,7 +1194,6 @@ actions:
                             'hum': item.get('humidity') | float(none),
                             'wind': item.get('wind_speed') | float(0),
                             'uv': item.get('uv_index') | float(none),
-                            'conf': item.get('confidence') | float(70),
                             'cond': (condition | string) if condition is not none else '',
                             'bad': condition in bad,
                             'spread': item_spread,
@@ -1451,7 +1386,7 @@ actions:
                             {%- for slot in range(0, (((last - first) / step) | round(0, 'floor') | int) + 1) -%}
                               {%- set ts = first + slot * step -%}
                               {%- if dozwolony(ts) == 'True' -%}
-                              {%- set fc = namespace(seen=false, rain=0, prob=0, temp=none, hum=none, wind=0, bad=false, conf=70, wet=false) -%}
+                              {%- set fc = namespace(seen=false, rain=0, prob=0, temp=none, hum=none, wind=0, bad=false, wet=false) -%}
                               {%- set rec = namespace(rain=0, bad=false, heavy=0) -%}
                               {%- set fut = namespace(seen=0, rain=0, prob=0, unsafe=false) -%}
                               {%- for it in items -%}
@@ -1465,7 +1400,6 @@ actions:
                                     {%- set fc.wet = it.wet -%}
                                     {%- set fc.wind = it.wind -%}
                                     {%- set fc.bad = it.bad -%}
-                                    {%- set fc.conf = it.conf -%}
                                   {%- endif -%}
                                   {%- if it.t > ts - dry_s -%}
                                     {%- set rec.rain = rec.rain + it.rain -%}
@@ -1502,7 +1436,7 @@ actions:
                               {%- set score = fc.prob * 1.5 + fut.prob + (fc.rain + fut.rain) * 300
                                   + ((((fc.temp - 20) | abs) * 2) if fc.temp is not none else 10)
                                   + ((([fc.hum - 75, 0] | max) * 3) if fc.hum is not none else 0)
-                                  + fc.wind * 0.8 + (100 - fc.conf) * 0.4
+                                  + fc.wind * 0.8
                                   + (((ts - mid) | abs) / 3600) * 1.2
                                   + ((ts - earliest) / 3600) * per_hour -%}
                               {%- if safe -%}
@@ -1613,7 +1547,7 @@ actions:
                     {%- set high = high_rain_probability_percent | float(60) -%}
                     {%- set dry_s = (dry_after_rain_hours | float(3)) * 3600 -%}
                     {%- set horizon_s = (forecast_dry_horizon_hours | float(3)) * 3600 -%}
-                    {%- set fc = namespace(seen=false, rain=0, prob=0, temp=none, hum=none, bad=false, conf=70, cond='', wet=false, spread=none) -%}
+                    {%- set fc = namespace(seen=false, rain=0, prob=0, temp=none, hum=none, bad=false, cond='', wet=false, spread=none) -%}
                     {%- set rec = namespace(rain=0, bad=false, heavy=0) -%}
                     {%- set fut = namespace(seen=0, rain=0, prob=0, unsafe=false) -%}
                     {%- for it in items -%}
@@ -1627,7 +1561,6 @@ actions:
                           {%- set fc.wet = it.wet -%}
                           {%- set fc.spread = it.spread -%}
                           {%- set fc.bad = it.bad -%}
-                          {%- set fc.conf = it.conf -%}
                           {%- set fc.cond = it.cond -%}
                         {%- endif -%}
                         {%- if it.t > ts - dry_s -%}
@@ -1662,7 +1595,7 @@ actions:
                         and not rec_wet and not fut.unsafe -%}
                     {{ {'seen': fc.seen, 'safe': safe, 'rain': fc.rain, 'fut_rain': fut.rain,
                         'prob': [fc.prob, fut.prob] | max, 'temp': fc.temp, 'hum': fc.hum,
-                        'cond': fc.cond, 'conf': fc.conf, 'rec_wet': rec_wet, 'wet': fc.wet,
+                        'cond': fc.cond, 'rec_wet': rec_wet, 'wet': fc.wet,
                         'spread': fc.spread, 'fut_unsafe': fut.unsafe} }}
               - action: input_datetime.set_datetime
                 alias: Festgelegten Mähtermin speichern
@@ -1917,7 +1850,6 @@ actions:
                           and not is_state(rain_binary_sensor, 'on'))
                          or
                          (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                          and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
                           and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                        )
                        and state_attr(mower_entity, 'rain_delay') != true
@@ -1931,8 +1863,7 @@ actions:
                       and is_state(rain_binary_sensor, 'on'))
                      or
                      (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                      and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                           or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                      and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                      or state_attr(mower_entity, 'rain_delay') == true }}
             then:
               - action: lawn_mower.dock
@@ -1969,7 +1900,6 @@ actions:
                               and not is_state(rain_binary_sensor, 'on'))
                              or
                              (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                              and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
                               and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                            )
                            and state_attr(mower_entity, 'rain_delay') != true
@@ -1983,8 +1913,7 @@ actions:
                       and is_state(rain_binary_sensor, 'on'))
                      or
                      (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                      and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                           or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                      and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                      or state_attr(mower_entity, 'rain_delay') == true }}
             then:
               - action: lawn_mower.dock
@@ -2029,8 +1958,7 @@ actions:
                       and is_state(rain_binary_sensor, 'on'))
                      or
                      (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                      and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                           or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                      and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                      or state_attr(mower_entity, 'rain_delay') == true
                      or is_state(mower_entity, 'docked')
                      or (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60)
@@ -2045,7 +1973,6 @@ actions:
                            and not is_state(rain_binary_sensor, 'on'))
                           or
                           (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                           and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
                            and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
                          and state_attr(mower_entity, 'rain_delay') != true
                          and not (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60) }}
@@ -2057,8 +1984,7 @@ actions:
                           and is_state(rain_binary_sensor, 'on'))
                          or
                          (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                          and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                               or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                          and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                          or state_attr(mower_entity, 'rain_delay') == true
                          or is_state(mower_entity, 'docked') }}
                     alias: Stabile Rückkehr zur Ladestation nach dem Kantenschnitt bestätigen
@@ -2094,8 +2020,7 @@ actions:
                               and is_state(rain_binary_sensor, 'on'))
                              or
                              (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                              and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                                   or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                              and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                              or state_attr(mower_entity, 'rain_delay') == true }}
                     sequence:
                       - if:
@@ -2155,8 +2080,7 @@ actions:
                       and is_state(rain_binary_sensor, 'on'))
                      or
                      (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                      and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                           or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                      and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                      or state_attr(mower_entity, 'rain_delay') == true
                      or not is_state(mower_entity, 'docked')
                      or (states(battery_sensor) | float(0)) >= (post_edge_battery_percent | float(80)) }}
@@ -2171,8 +2095,7 @@ actions:
                               and is_state(rain_binary_sensor, 'on'))
                              or
                              (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                              and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                                   or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                              and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                              or state_attr(mower_entity, 'rain_delay') == true }}
                     sequence:
                       - event: worx_smart_mowing_replan
@@ -2251,14 +2174,13 @@ actions:
                     {% elif (temperature_after_edges_c | float(-99)) < (min_mowing_temperature_c | float(10))
                           or (temperature_after_edges_c | float(-99)) > (max_mowing_temperature_c | float(25)) %}temperature
                     {% elif states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                          and (smart_weather_rain_rate_available | string | lower) != 'true' %}sensor
+                          and (forecast_available | string | lower) != 'true' %}sensor
                     {% elif state_attr(mower_entity, 'rain_delay') == true %}rain_delay
                     {% elif (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
                                and is_state(rain_binary_sensor, 'on'))
                           or
                           (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                           and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                                or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])) %}rain
+                           and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']) %}rain
                     {% elif (spread_after_edges | float(99)) < (min_dew_point_spread_c | float(2.5)) %}humidity
                     {% elif (garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)) %}garden
                     {% elif not is_state(mower_entity, 'docked')
@@ -2270,7 +2192,7 @@ actions:
                     {% if code == 'sensor' and (temperature_after_edges_available | string | lower) != 'true' %}
                       nach dem Kantenschnitt kann die aktuelle Außentemperatur nicht gelesen werden
                     {% elif code == 'sensor' %}
-                      nach dem Kantenschnitt kann der aktuelle Niederschlagsstatus weder vom Sensor noch von MeteoFusion HA gelesen werden
+                      nach dem Kantenschnitt kann der aktuelle Regenzustand weder vom Sensor noch von der Wetter-Entität gelesen werden
                     {% elif code == 'temperature' and (temperature_after_edges_c | float(-99)) < (min_mowing_temperature_c | float(10)) %}
                       nach dem Kantenschnitt ist die Temperatur auf {{ temperature_after_edges_c | float | round(0) | int }} °C gefallen, Minimum zum Mähen ist {{ min_mowing_temperature_c | int }} °C
                     {% elif code == 'temperature' %}
@@ -2278,7 +2200,7 @@ actions:
                     {% elif code == 'rain_delay' %}
                       nach dem Kantenschnitt meldet die Worx Cloud weiterhin eine Regenverzögerung
                     {% elif code == 'rain' %}
-                      nach dem Kantenschnitt zeigt die lokale Messung oder MeteoFusion HA laufenden Niederschlag
+                      nach dem Kantenschnitt meldet die lokale Messung oder die Wetter-Entität laufenden Regen
                     {% elif code == 'humidity' %}
                       nach dem Kantenschnitt ist die Luft nur {{ spread_after_edges | float(0) | round(1) | string | replace('.', ',') }} °C wärmer als der Taupunkt (Luftfeuchte {{ humidity_after_edges | float | round(0) | int }}%), daher ist das Gras noch nass
                     {% elif code == 'garden' %}
@@ -2323,7 +2245,6 @@ actions:
                               and not is_state(rain_binary_sensor, 'on'))
                              or
                              (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                              and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
                               and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                            )
                            and state_attr(mower_entity, 'rain_delay') != true
@@ -2337,8 +2258,7 @@ actions:
                           and is_state(rain_binary_sensor, 'on'))
                          or
                          (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                          and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                               or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                          and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                          or state_attr(mower_entity, 'rain_delay') == true }}
                 then:
                   - action: lawn_mower.dock
@@ -2376,7 +2296,6 @@ actions:
                                   and not is_state(rain_binary_sensor, 'on'))
                                  or
                                  (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                                  and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
                                   and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                                )
                                and state_attr(mower_entity, 'rain_delay') != true
@@ -2390,8 +2309,7 @@ actions:
                           and is_state(rain_binary_sensor, 'on'))
                          or
                          (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                          and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                               or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                          and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                          or state_attr(mower_entity, 'rain_delay') == true }}
                 then:
                   - action: lawn_mower.dock
@@ -2443,7 +2361,6 @@ actions:
                                  and not is_state(rain_binary_sensor, 'on'))
                                 or
                                 (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                                 and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
                                  and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
                                and state_attr(mower_entity, 'rain_delay') != true
                                and not completed
@@ -2553,8 +2470,7 @@ actions:
                           and is_state(rain_binary_sensor, 'on'))
                          or
                          (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                          and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                               or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                          and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                          or state_attr(mower_entity, 'rain_delay') == true
                          or is_state(mower_entity, 'docked') }}
                     alias: Auf Rückkehr zur Ladestation nach dem normalen Mähen warten
@@ -2567,7 +2483,6 @@ actions:
                                and not is_state(rain_binary_sensor, 'on'))
                               or
                               (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                               and (state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) <= 0.05
                                and states(forecast_weather_entity | trim) not in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
                              and state_attr(mower_entity, 'rain_delay') != true }}
                     then:
@@ -2578,8 +2493,7 @@ actions:
                               and is_state(rain_binary_sensor, 'on'))
                              or
                              (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                              and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                                   or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                              and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                              or state_attr(mower_entity, 'rain_delay') == true
                              or is_state(mower_entity, 'docked') }}
                         alias: Stabile Rückkehr zur Ladestation nach dem normalen Mähen bestätigen
@@ -2596,8 +2510,7 @@ actions:
                             and is_state(rain_binary_sensor, 'on'))
                            or
                            (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                            and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                                 or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                            and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                            or state_attr(mower_entity, 'rain_delay') == true }}
                       mowing_completed: >-
                         {% set mower_changed_ts = as_timestamp(states[mower_entity].last_changed) %}
@@ -2610,8 +2523,7 @@ actions:
                         {% set rain_now = (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
                             and is_state(rain_binary_sensor, 'on'))
                             or (states(rain_binary_sensor) in ['unknown', 'unavailable', 'none', '']
-                                and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
-                                     or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
+                                and states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])
                             or state_attr(mower_entity, 'rain_delay') == true %}
                         {{ not rain_now and (aborted_by_error | string | lower) != 'true'
                            and (vision_complete if mower_cycle_type == 'vision_rtk' else is_state(mower_entity, 'docked')) }}

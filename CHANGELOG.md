@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.1 - 2026-10-11
+
+Home Assistant restart during a cycle:
+
+- A restart of Home Assistant or a reload of automations in the middle of a cycle no longer loses the mow. Previously the automation forgot the running cycle, did not record the mow or reset the growth estimate, and planned another full cycle the same day, so the mower went out twice.
+- After a restart or reload the automation waits for the mower to be reported and takes over the running stage. During the edge pass the cycle continues with charging and normal mowing, without a second edge pass. During normal mowing the automation follows the mower back to the dock and records the completed mow. Mowing started outside the automation is followed like manual mowing. Nothing changes when the mower is docked.
+- Known limit: a restart while the mower charges in the dock between the edge pass and normal mowing looks the same as a missed start, so the cycle starts again with the edge pass.
+
+Notifications:
+
+- When a confirmed time is outside the preferred window, the notification says why: what the forecast shows in the window (rain, wet grass after rain, dew, temperature outside the allowed range, a forecast that is too short, weather getting worse during mowing), that the window comes before the growth threshold, minimum gap or drying time, or that a weekday or daylight limit applies.
+- A postponed start is labelled `jutro` or `wczoraj` like the other notifications, instead of a bare date.
+- The charging steps after the edge pass no longer hard-code `80 procent` in their names.
 ## 0.8.0 - 2026-10-11
 
 Short faults that end the run (issue #4):

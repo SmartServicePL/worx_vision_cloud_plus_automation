@@ -95,6 +95,20 @@ If the mower reports an error (for example `trapped timeout`, `lifted` or `wheel
 
 Vision / RTK mowers sometimes report an error for only a second and then drive home, for example after losing the RTK signal (`insufficient sensor data`). The monitoring loops react to the mower entering `error` immediately. If the mower then returns to the dock instead of mowing on, the cycle is recorded as interrupted instead of completed: the growth estimate keeps 70%, the last-mow helper is not changed, the notification names the error and the next attempt is planned no earlier than one hour later. A short error after which the mower keeps mowing does not interrupt the cycle. The same applies to mowing started outside the automation.
 
+### Home Assistant restart during a cycle
+
+A restart of Home Assistant or a reload of automations stops every running automation, including one that is waiting for the mower to finish. The automation now takes over the running cycle after a restart or reload. It waits up to ten minutes for the Worx integration to report the mower, then two more minutes for a stable state. If the mower is mowing or returning to the dock:
+
+- during the edge pass of a scheduled cycle (status `32`, or returning within one hour of the planned start), the cycle continues as usual: the mower charges, the conditions are checked again and normal mowing starts without a second edge pass,
+- during normal mowing of a scheduled cycle, the automation follows the mower until it is back in the dock and records the completed mow,
+- during mowing started outside the automation, it is followed like manual mowing.
+
+A cycle counts as scheduled when the next-mowing helper is in the past, after the last mow, and no older than the monitoring limit. If the mower is docked after the restart, nothing changes. A restart while the mower charges in the dock between the edge pass and normal mowing cannot be told apart from a missed start, so the cycle starts again with the edge pass.
+
+### Times outside the preferred window
+
+When the planner confirms a time outside the preferred window, the notification says why, for example `Godzina poza oknem 09:00–12:00, bo w oknie prognoza wskazuje: rosa.` Possible reasons are rain, wet grass after rain, dew, a temperature outside the allowed range, a forecast that is too short or weather getting worse during mowing. Other reasons are that the window comes before the growth threshold, the minimum gap or the drying time is reached, or that a weekday or daylight limit applies.
+
 ### Optional days, daylight and garden checks
 
 All of these are off by default, in the section **Opcje dodatkowe (domyślnie wyłączone)**:

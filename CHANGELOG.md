@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.1 - 2026-10-11
+
+Stuck cloud status:
+
+- A return command sent to a mower that already stands in the dock can leave the Worx cloud in state `104 searching home`; the automation then saw the mower as away and postponed every start. All return commands sent right after a start command when rain begins (edge pass and normal mowing, also on retry) now only reach a mower that has left the dock.
+- Restored safeguard: when the mower entity has shown `mowing` or `returning` for five minutes while RTK places the mower at the station, and no cycle is running, the automation sends a one-minute one-time mowing, then a return to the dock, and a notification saying whether the status was corrected. It is skipped during rain or rain delay, in the dark when daylight-only mowing is enabled, and when someone is in the garden, and retried at most once every two hours.
 ## 0.10.0 - 2026-10-11
 
 Weather sources:

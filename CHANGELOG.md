@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0 - 2026-10-11
+
+Weather sources:
+
+- The hourly forecast now comes from any Home Assistant `weather` entity with an hourly forecast, for example `weather.forecast_home` from the built-in Met.no integration or Tomorrow.io. Measurements come optionally from your own weather station. The blueprint no longer reads the MeteoFusion `smart_service.weather.v1` context or the non-standard `rain_rate` and `rain_today` attributes, and the MeteoFusion forecast `confidence` no longer affects the chosen time.
+- When the station rain sensor is unavailable, the state of the forecast weather entity (`rainy`, `pouring`, `lightning-rainy`, `snowy-rainy`, `hail`) is used to detect ongoing rain. Previously, with a weather entity other than MeteoFusion and an unavailable rain sensor, every start was postponed because current rain could not be read.
+- Input descriptions, README, README.de.md and the documentation recommend the Home Assistant forecast with an optional weather station. Existing automations keep their inputs; if MeteoFusion was selected as the forecast, select another `weather` entity.
 ## 0.9.0 - 2026-10-11
 
 English and German blueprints:

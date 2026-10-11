@@ -1672,7 +1672,7 @@ actions:
                   plan_label: >-
                     {% set local = (plan_ts | float(0)) | as_datetime | as_local %}
                     {% set days = (local.date() - now().date()).days %}
-                    {% set names = ['poniedziałek', 'wtorek', 'środa', 'czwartek', 'piątek', 'sobota', 'niedziela'] %}
+                    {% set names = {0: 'poniedziałek', 1: 'wtorek', 2: 'środa', 3: 'czwartek', 4: 'piątek', 5: 'sobota', 6: 'niedziela'} %}
                     {% if days <= 0 %}dziś o {{ local.strftime('%H:%M') }}
                     {% elif days == 1 %}jutro o {{ local.strftime('%H:%M') }}
                     {% else %}{{ names[local.weekday()] }} {{ local.strftime('%d.%m') }} o {{ local.strftime('%H:%M') }}{% endif %}

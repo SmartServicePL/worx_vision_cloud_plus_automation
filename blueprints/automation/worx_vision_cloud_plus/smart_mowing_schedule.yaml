@@ -1414,7 +1414,7 @@ actions:
                     {%- set horizon_s = (forecast_dry_horizon_hours | float(3)) * 3600 -%}
                     {%- set min_future = forecast_min_future_hours | int(2) -%}
                     {%- set heavy_mm = max_rain_24h_mm | float(3) -%}
-                    {%- set result = namespace(ts=0, source='', in_window=false, window_checked=false, fb_ts=0, fb_score=99999999, fb_in_window=false, fb_source='') -%}
+                    {%- set result = namespace(ts=0, source='', in_window=false, window_checked=false, why=[], shifted=false, fb_ts=0, fb_score=99999999, fb_in_window=false, fb_source='') -%}
                     {%- if planning_mode == 'auto' and items | length > 0 -%}
                       {%- for d in range(base_day, base_day + (weather_search_days | int(4))) -%}
                         {%- if result.ts == 0 -%}
@@ -1431,7 +1431,7 @@ actions:
                           {%- set mid = (ps + pe) / 2 -%}
                           {%- set first = ((([rs, earliest] | max) / step) | round(0, 'ceil') | int) * step -%}
                           {%- set last = [re, last_t] | min -%}
-                          {%- set day = namespace(pref_ts=0, pref_score=99999999, any_ts=0, any_score=99999999, window_checked=false) -%}
+                          {%- set day = namespace(pref_ts=0, pref_score=99999999, any_ts=0, any_score=99999999, window_checked=false, why=[]) -%}
                           {%- if first > last_t -%}
                             {%- set candidate = ps if earliest <= ps else (first if first <= pe else 0) -%}
                             {%- if candidate > 0 -%}
@@ -1511,6 +1511,12 @@ actions:
                                   {%- set day.any_ts = ts -%}
                                 {%- endif -%}
                               {%- else -%}
+                                {%- if in_window -%}
+                                  {%- set day.why = day.why + (['rain'] if not rain_ok else [])
+                                      + (['wet_after_rain'] if rec_wet else []) + (['dew'] if not hum_ok else [])
+                                      + (['temperature'] if not temp_ok else []) + (['data'] if not data_ok else [])
+                                      + (['later'] if fut.unsafe and rain_ok and not rec_wet and hum_ok and temp_ok and data_ok else []) -%}
+                                {%- endif -%}
                                 {%- set penalty = (0 if data_ok else 6000) + (0 if rain_ok else 10000)
                                     + (1800 if rec_wet else 0) + (6000 if fut.unsafe else 0)
                                     + (0 if temp_ok else 3000) + (0 if hum_ok else 1500) -%}
@@ -1533,6 +1539,7 @@ actions:
                             {%- set result.source = 'forecast' -%}
                             {%- set result.in_window = false -%}
                             {%- set result.window_checked = day.window_checked -%}
+                            {%- set result.why = day.why | unique | list -%}
                           {%- endif -%}
                         {%- endif -%}
                       {%- endfor -%}
@@ -1585,9 +1592,11 @@ actions:
                       {%- if shift.ts > 0 -%}
                         {%- set result.ts = shift.ts -%}
                         {%- set result.in_window = false -%}
+                        {%- set result.shifted = true -%}
                       {%- endif -%}
                     {%- endif -%}
-                    {{ {'ts': result.ts, 'source': result.source, 'in_window': result.in_window, 'window_checked': result.window_checked} }}
+                    {{ {'ts': result.ts, 'source': result.source, 'in_window': result.in_window, 'window_checked': result.window_checked,
+                        'why': result.why, 'shifted': result.shifted} }}
               - variables:
                   plan_ts: "{{ plan_result.ts | float(0) }}"
                   plan_details: >-
@@ -1709,6 +1718,29 @@ actions:
                     {% else %}
                       prognoza nie potwierdza dobrych warunków przez cały czas koszenia
                     {% endif %}
+                  plan_window_note: >-
+                    {% set r = plan_result %}
+                    {% set window = (primary_start_time_value | trim)[:5] ~ '–' ~ (backup_start_time_value | trim)[:5] %}
+                    {% set names = {'rain': 'deszcz', 'wet_after_rain': 'mokra trawa po deszczu',
+                                    'dew': 'rosa', 'temperature': 'temperatura poza zakresem ' ~ (min_mowing_temperature_c | int) ~ '–' ~ (max_mowing_temperature_c | int) ~ ' °C',
+                                    'data': 'za krótka prognoza', 'later': 'pogorszenie pogody w trakcie koszenia'} %}
+                    {% if (plan_confirmed | string | lower) != 'true' or r.in_window or planning_mode != 'auto' or r.source != 'forecast' %}
+                      {{ '' }}
+                    {% elif r.shifted %}
+                      poza oknem {{ window }}, bo koszenie jest dozwolone tylko w wybrane dni albo za dnia
+                    {% elif r.window_checked and (r.why | length) > 0 %}
+                      {% set labels = namespace(items=[]) %}
+                      {% for key in r.why %}{% set labels.items = labels.items + [names.get(key, key)] %}{% endfor %}
+                      poza oknem {{ window }}, bo w oknie prognoza wskazuje: {{ labels.items | join(', ') }}
+                    {% elif (plan_constraint | trim) == 'growth' %}
+                      poza oknem {{ window }}, bo trawa osiągnie próg koszenia dopiero po oknie
+                    {% elif (plan_constraint | trim) == 'gap' %}
+                      poza oknem {{ window }}, bo minimalna przerwa od ostatniego koszenia kończy się po oknie
+                    {% elif (plan_constraint | trim) == 'drying' %}
+                      poza oknem {{ window }}, bo trawa schnie po deszczu dłużej niż trwa okno
+                    {% else %}
+                      poza oknem {{ window }}, bo dzisiejsze okno już minęło albo nie ma w nim bezpiecznej godziny
+                    {% endif %}
                   plan_forecast_line: >-
                     {% set d = plan_details %}
                     {% set names = {
@@ -1747,6 +1779,7 @@ actions:
                   plan_summary: |-
                     {{ plan_heading | trim }}
                     {% if (plan_reason | trim | length) > 0 %}Powód: {{ plan_reason | trim }}.
+                    {% endif %}{% if (plan_window_note | trim | length) > 0 %}Godzina {{ plan_window_note | trim }}.
                     {% endif %}{% if (plan_forecast_line | trim | length) > 0 %}Prognoza: {{ plan_forecast_line | trim }}.{% endif %}
                   growth_line: >-
                     Trawa: {{ plan_growth_mm | float(0) | round(1) | string | replace('.', ',') }} mm (próg koszenia {{ growth_threshold_mm | float(3) | round(1) | string | replace('.', ',') }} mm)
@@ -1844,7 +1877,8 @@ actions:
           - variables:
               planned_start_label: >-
                 {% set local = (state_attr(next_mow_helper, 'timestamp') | float(0)) | as_datetime | as_local %}
-                {{ ('dziś' if local.date() == now().date() else local.strftime('%d.%m')) ~ ' o ' ~ local.strftime('%H:%M') }}
+                {% set days = (local.date() - now().date()).days %}
+                {{ {0: 'dziś', 1: 'jutro', -1: 'wczoraj'}.get(days, local.strftime('%d.%m')) ~ ' o ' ~ local.strftime('%H:%M') }}
           - if:
               - condition: template
                 alias: Start koszenia jest zablokowany
@@ -2122,7 +2156,7 @@ actions:
                      or state_attr(mower_entity, 'rain_delay') == true
                      or not is_state(mower_entity, 'docked')
                      or (states(battery_sensor) | float(0)) >= (post_edge_battery_percent | float(80)) }}
-                alias: Poczekaj w bazie na naładowanie baterii do 80 procent
+                alias: Poczekaj w bazie na naładowanie baterii przed zwykłym koszeniem
                 timeout: "08:00:00"
                 continue_on_timeout: true
               - choose:
@@ -2174,7 +2208,7 @@ actions:
                           started_at: "{{ mowing_cycle_started_at }}"
                           finished_at: "{{ now().strftime('%d.%m o %H:%M') }}"
                           min_delay_minutes: 60
-                      - stop: Bateria nie osiągnęła 80 procent po krawędziach.
+                      - stop: Bateria nie naładowała się do wymaganego poziomu po krawędziach.
               - variables:
                   temperature_after_edges_available: >-
                     {% if temperature_source_entity.split('.')[0] == 'weather' %}

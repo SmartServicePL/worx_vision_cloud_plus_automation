@@ -840,7 +840,11 @@ variables:
     {% else %}
       {{ '' }}
     {% endif %}
-  forecast_available: "{{ (forecast_weather_entity | trim | length) > 0 }}"
+  # Prognoza jest pobierana tylko z dostępnej encji: weather.get_forecasts dla encji
+  # niedostępnej kończy się błędem, który przerwałby całe planowanie.
+  forecast_available: >-
+    {% set entity = forecast_weather_entity | trim %}
+    {{ entity | length > 0 and states(entity) not in ['unavailable', 'unknown'] }}
   smart_weather_context_available: >-
     {% set entity = forecast_weather_entity | trim %}
     {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
@@ -1695,9 +1699,9 @@ actions:
                       {{ '' }}
                     {% elif (plan_config_problem | string | lower) == 'true' %}
                       zmień okno koszenia albo potwierdź akcesorium FiatLux w ustawieniach automatyzacji
-                    {% elif (forecast_available | string | lower) != 'true' or planning_mode != 'auto' %}
+                    {% elif planning_mode != 'auto' or (forecast_weather_entity | trim | length) == 0 %}
                       bez prognozy godzinowej warunki można sprawdzić dopiero w chwili startu
-                    {% elif fc_items | length == 0 %}
+                    {% elif (forecast_available | string | lower) != 'true' or fc_items | length == 0 %}
                       prognoza pogody jest chwilowo niedostępna, więc warunki zostaną sprawdzone w chwili startu
                     {% elif not d.seen and (plan_constraint | trim) == 'growth' %}
                       trawa urośnie do progu koszenia około {{ ((growth_ready_ts | float(0)) | as_datetime | as_local).strftime('%d.%m') }}, a prognoza nie sięga jeszcze tego dnia

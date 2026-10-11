@@ -840,7 +840,11 @@ variables:
     {% else %}
       {{ '' }}
     {% endif %}
-  forecast_available: "{{ (forecast_weather_entity | trim | length) > 0 }}"
+  # Die Vorhersage wird nur von einer verfügbaren Entität abgefragt: weather.get_forecasts für eine
+  # nicht verfügbare Entität endet mit einem Fehler, der die gesamte Planung abbrechen würde.
+  forecast_available: >-
+    {% set entity = forecast_weather_entity | trim %}
+    {{ entity | length > 0 and states(entity) not in ['unavailable', 'unknown'] }}
   smart_weather_context_available: >-
     {% set entity = forecast_weather_entity | trim %}
     {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
@@ -1695,9 +1699,9 @@ actions:
                       {{ '' }}
                     {% elif (plan_config_problem | string | lower) == 'true' %}
                       ändere das Mähfenster oder bestätige das FiatLux-Zubehör in den Einstellungen der Automatisierung
-                    {% elif (forecast_available | string | lower) != 'true' or planning_mode != 'auto' %}
+                    {% elif planning_mode != 'auto' or (forecast_weather_entity | trim | length) == 0 %}
                       ohne stündliche Vorhersage können die Bedingungen erst beim Start geprüft werden
-                    {% elif fc_items | length == 0 %}
+                    {% elif (forecast_available | string | lower) != 'true' or fc_items | length == 0 %}
                       Wettervorhersage ist vorübergehend nicht verfügbar, daher werden die Bedingungen beim Start geprüft
                     {% elif not d.seen and (plan_constraint | trim) == 'growth' %}
                       Gras erreicht die Mähschwelle etwa am {{ ((growth_ready_ts | float(0)) | as_datetime | as_local).strftime('%d.%m.') }}, die Vorhersage reicht aber noch nicht bis zu diesem Tag

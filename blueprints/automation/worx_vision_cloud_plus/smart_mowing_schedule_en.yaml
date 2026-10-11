@@ -840,7 +840,11 @@ variables:
     {% else %}
       {{ '' }}
     {% endif %}
-  forecast_available: "{{ (forecast_weather_entity | trim | length) > 0 }}"
+  # The forecast is only requested from an available entity: weather.get_forecasts for an
+  # unavailable entity fails with an error that would stop the whole planning run.
+  forecast_available: >-
+    {% set entity = forecast_weather_entity | trim %}
+    {{ entity | length > 0 and states(entity) not in ['unavailable', 'unknown'] }}
   smart_weather_context_available: >-
     {% set entity = forecast_weather_entity | trim %}
     {% set context = state_attr(entity, 'smart_service_context') if entity | length > 0 else none %}
@@ -1695,9 +1699,9 @@ actions:
                       {{ '' }}
                     {% elif (plan_config_problem | string | lower) == 'true' %}
                       change the mowing window or confirm the FiatLux accessory in the automation settings
-                    {% elif (forecast_available | string | lower) != 'true' or planning_mode != 'auto' %}
+                    {% elif planning_mode != 'auto' or (forecast_weather_entity | trim | length) == 0 %}
                       without an hourly forecast, conditions can only be checked at start time
-                    {% elif fc_items | length == 0 %}
+                    {% elif (forecast_available | string | lower) != 'true' or fc_items | length == 0 %}
                       the weather forecast is temporarily unavailable, so conditions will be checked at start time
                     {% elif not d.seen and (plan_constraint | trim) == 'growth' %}
                       grass will reach the mowing threshold around {{ ((growth_ready_ts | float(0)) | as_datetime | as_local).strftime('%d.%m') }}, and the forecast does not reach that day yet

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.8.0 - 2026-10-11
+
+Short faults that end the run (issue #4):
+
+- A Vision / RTK run that the mower aborts after a short error (for example `insufficient sensor data` for about a second, then going home) is no longer counted as a completed mow. The monitoring loops now wait for the mower to enter `error` instead of polling once a minute. When the mower then returns to the dock instead of mowing on, the cycle is recorded as interrupted: the growth estimate keeps 70%, the last-mow helper is not changed and the next attempt is planned no earlier than one hour later. The notification names the error. A short error after which the mower keeps mowing does not interrupt the cycle.
+- The same check applies to mowing started outside the automation.
+- Requires Home Assistant 2025.4 or newer (variables set inside the monitoring loop).
+
+New optional settings, all off by default (behaviour without them is unchanged):
+
+- **Kosić tylko w wybrane dni** - the planner only chooses the selected weekdays.
+- **Kosić tylko za dnia** - the planner and the start check only allow times between sunrise and sunset (from `sun.sun`) with a configurable margin, 30 minutes by default. It also limits the FiatLux night window. Recommended to protect hedgehogs and other small animals that are active after dusk.
+- **Nie kosić, gdy ktoś jest w ogrodzie** - selected motion, presence or gate sensors block the start. When someone enters the garden during a cycle, the mower is sent to the dock (or paused, as selected) and the cycle is recorded as interrupted with a new attempt no earlier than 30 minutes later. A motion sensor counts for five minutes after it turns off.
+- **Akcje powiadomienia** - every notification can also run your own actions, for example `notify.mobile_app_phone`, with the `{{ tytul }}` and `{{ tresc }}` variables. The daily plan is sent to these actions only when **Wysyłaj także codzienny plan koszenia** is enabled.
+
 ## 0.7.1 - 2026-10-01
 
 Dew and wet-grass detection:

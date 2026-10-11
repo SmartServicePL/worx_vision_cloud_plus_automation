@@ -57,6 +57,15 @@ blueprint:
     - koszenie nocne 22:00-05:00 jest dostępne tylko po potwierdzeniu akcesorium
       FiatLux.
 
+    Opcje dodatkowe (domyślnie wyłączone):
+    - koszenie tylko w wybrane dni tygodnia,
+    - koszenie tylko za dnia, z zapasem minut po wschodzie i przed zachodem słońca
+      (chroni jeże i inne małe zwierzęta, które żerują po zmroku),
+    - wstrzymanie koszenia, gdy ktoś jest w ogrodzie (czujniki ruchu, furtka,
+      przełącznik "dzieci/psy w ogrodzie"); robot wraca do bazy albo staje,
+      a cykl jest liczony jako przerwany,
+    - powiadomienia na telefon lub inne akcje (np. notify.mobile_app_...).
+
     Powiadomienia:
     - po dziennym przeliczeniu przyrostu trawy,
     - po przełożeniu startu,
@@ -73,7 +82,7 @@ blueprint:
   domain: automation
   author: Smart Service
   homeassistant:
-    min_version: 2025.1.0
+    min_version: 2025.4.0
   source_url: https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml
   input:
     mower_section:
@@ -531,6 +540,105 @@ blueprint:
               step: 1
               unit_of_measurement: min
               mode: slider
+    extra_options_section:
+      name: Opcje dodatkowe (domyślnie wyłączone)
+      icon: mdi:calendar-check
+      collapsed: true
+      input:
+        allowed_days_enabled:
+          name: Kosić tylko w wybrane dni
+          description: Wyłączone = planer może wybrać każdy dzień tygodnia.
+          default: false
+          selector:
+            boolean:
+        allowed_days:
+          name: Dni koszenia
+          description: Używane tylko po włączeniu opcji powyżej.
+          default: [mon, tue, wed, thu, fri, sat, sun]
+          selector:
+            select:
+              multiple: true
+              options:
+                - label: Poniedziałek
+                  value: mon
+                - label: Wtorek
+                  value: tue
+                - label: Środa
+                  value: wed
+                - label: Czwartek
+                  value: thu
+                - label: Piątek
+                  value: fri
+                - label: Sobota
+                  value: sat
+                - label: Niedziela
+                  value: sun
+        daylight_only:
+          name: Kosić tylko za dnia
+          description: >-
+            Start tylko między wschodem a zachodem słońca (encja sun.sun), z zapasem ustawionym poniżej.
+            Zalecane: jeże i inne małe zwierzęta żerują po zmroku. Ma pierwszeństwo przed oknem nocnym FiatLux.
+          default: false
+          selector:
+            boolean:
+        daylight_margin_minutes:
+          name: Zapas po wschodzie i przed zachodem słońca
+          description: Używane tylko po włączeniu opcji "Kosić tylko za dnia".
+          default: 30
+          selector:
+            number:
+              min: 0
+              max: 120
+              step: 5
+              unit_of_measurement: min
+              mode: slider
+        garden_check_enabled:
+          name: Nie kosić, gdy ktoś jest w ogrodzie
+          description: >-
+            Gdy któryś z czujników poniżej ma stan "on", koszenie nie startuje, a trwające koszenie
+            zostaje przerwane i zaplanowane ponownie (najwcześniej po 30 minutach).
+          default: false
+          selector:
+            boolean:
+        garden_sensors:
+          name: Czujniki "ktoś w ogrodzie"
+          description: Czujniki ruchu lub obecności w ogrodzie, furtka, przełącznik "dzieci/psy w ogrodzie". Stan "on" = ktoś jest.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: binary_sensor
+                - domain: input_boolean
+        garden_reaction:
+          name: Gdy ktoś wejdzie do ogrodu podczas koszenia
+          default: dock
+          selector:
+            select:
+              options:
+                - label: Odeślij kosiarkę do bazy
+                  value: dock
+                - label: Zatrzymaj kosiarkę na trawniku
+                  value: pause
+    notifications_section:
+      name: Powiadomienia na telefon (opcjonalnie)
+      icon: mdi:cellphone-message
+      collapsed: true
+      input:
+        notify_actions:
+          name: Akcje powiadomienia
+          description: >-
+            Wykonywane razem z powiadomieniem w Home Assistant, np. notify.mobile_app_telefon.
+            Dostępne zmienne: {{ tytul }} i {{ tresc }}. Puste = tylko powiadomienie w Home Assistant.
+          default: []
+          selector:
+            action: {}
+        notify_daily_plan:
+          name: Wysyłaj także codzienny plan koszenia
+          description: Wyłączone = na telefon trafiają tylko start, przełożenie, przerwanie i zakończenie koszenia.
+          default: false
+          selector:
+            boolean:
 
 mode: parallel
 max: 10
@@ -556,6 +664,11 @@ triggers:
     event_type: worx_smart_mowing_replan
     event_data:
       mower_entity: !input mower_entity
+  - trigger: state
+    id: garden_entered
+    entity_id: !input garden_sensors
+    from: "off"
+    to: "on"
 
 variables:
   mower_entity: !input mower_entity
@@ -570,6 +683,30 @@ variables:
   growth_helper: !input growth_helper
   last_mow_helper: !input last_mow_helper
   next_mow_helper: !input next_mow_helper
+  allowed_days_enabled: !input allowed_days_enabled
+  allowed_days: !input allowed_days
+  daylight_only: !input daylight_only
+  daylight_margin_minutes: !input daylight_margin_minutes
+  garden_check_enabled: !input garden_check_enabled
+  garden_sensors: !input garden_sensors
+  garden_reaction: !input garden_reaction
+  notify_daily_plan: !input notify_daily_plan
+  # Wschód i zachód jako sekundy od północy (czas lokalny) z sun.sun; -1 = brak danych.
+  # Do planowania kolejnych dni wystarczają godziny dzisiejsze: zmiana o kilka minut na dzień
+  # jest mniejsza niż zapas, a przed startem warunek jest sprawdzany ponownie.
+  sun_rise_s: >-
+    {% set r = state_attr('sun.sun', 'next_rising') %}
+    {% if r %}{% set l = as_local(as_datetime(r)) %}{{ l.hour * 3600 + l.minute * 60 }}{% else %}-1{% endif %}
+  sun_set_s: >-
+    {% set r = state_attr('sun.sun', 'next_setting') %}
+    {% if r %}{% set l = as_local(as_datetime(r)) %}{{ l.hour * 3600 + l.minute * 60 }}{% else %}-1{% endif %}
+  daylight_now: >-
+    {% set sod = now().hour * 3600 + now().minute * 60 %}
+    {% set m = (daylight_margin_minutes | float(30)) * 60 %}
+    {{ (sun_rise_s | float(-1)) >= 0 and (sun_set_s | float(-1)) >= 0
+       and sod >= (sun_rise_s | float) + m and sod <= (sun_set_s | float) - m }}
+  garden_occupied: >-
+    {{ garden_sensors | select('is_state', 'on') | list | length > 0 }}
   mower_cycle_type: !input mower_cycle_type
   mower_model: !input mower_model
   lawn_area_m2: !input lawn_area_m2
@@ -962,6 +1099,10 @@ variables:
   start_block_code: >-
     {% if states(mower_entity) != 'docked' %}mower_away
     {% elif mowing_window_preset == 'night' and not (fiatlux_installed | bool) %}config
+    {% elif allowed_days_enabled and allowed_days | length == 0 %}config_days
+    {% elif allowed_days_enabled and ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][now().weekday()] not in allowed_days %}day
+    {% elif daylight_only and (daylight_now | string | lower) != 'true' %}dark
+    {% elif garden_check_enabled and (garden_occupied | string | lower) == 'true' %}garden
     {% elif (states(battery_sensor) | float(0)) < (min_battery_percent | float) %}battery
     {% elif (temperature_available | string | lower) != 'true' %}sensor
     {% elif (temp_c | float) < (min_mowing_temperature_c | float) or (temp_c | float) > (max_mowing_temperature_c | float) %}temperature
@@ -982,6 +1123,16 @@ variables:
       kosiarka nie jest w bazie (stan: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }})
     {% elif code == 'config' %}
       wybrano koszenie nocne, ale nie potwierdzono zamontowanego akcesorium FiatLux
+    {% elif code == 'config_days' %}
+      włączono koszenie tylko w wybrane dni, ale nie wybrano żadnego dnia
+    {% elif code == 'day' %}
+      dziś nie jest wybranym dniem koszenia
+    {% elif code == 'dark' and (sun_rise_s | float(-1)) < 0 %}
+      włączono koszenie tylko za dnia, ale brak encji sun.sun
+    {% elif code == 'dark' %}
+      jest za ciemno; koszenie tylko za dnia, dziś od {{ ((sun_rise_s | float) + (daylight_margin_minutes | float(30)) * 60) | timestamp_custom('%H:%M', false) }} do {{ ((sun_set_s | float) - (daylight_margin_minutes | float(30)) * 60) | timestamp_custom('%H:%M', false) }}
+    {% elif code == 'garden' %}
+      ktoś jest w ogrodzie
     {% elif code == 'battery' %}
       bateria ma {{ states(battery_sensor) }}%, a wymagane minimum to {{ min_battery_percent }}%
     {% elif code == 'sensor' and (temperature_available | string | lower) != 'true' %}
@@ -1017,6 +1168,10 @@ variables:
     {% set delays = {
       'mower_away': 120,
       'config': 720,
+      'config_days': 720,
+      'day': 0,
+      'dark': 0 if (sun_rise_s | float(-1)) >= 0 else 720,
+      'garden': 30,
       'battery': 60,
       'sensor': 60,
       'temperature': 30 if with_forecast else 60,
@@ -1213,6 +1368,16 @@ actions:
                     {% else %}delay{% endif %}
               - variables:
                   plan_result: >-
+                    {%- macro dozwolony(ts) -%}
+                      {%- set l = ts | as_datetime | as_local -%}
+                      {%- set sod = l.hour * 3600 + l.minute * 60 -%}
+                      {%- set m = (daylight_margin_minutes | float(30)) * 60 -%}
+                      {{- (not allowed_days_enabled
+                            or ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'][l.weekday()] in allowed_days)
+                          and (not daylight_only
+                            or ((sun_rise_s | float(-1)) >= 0 and sod >= (sun_rise_s | float) + m
+                                and sod <= (sun_set_s | float) - m)) -}}
+                    {%- endmacro -%}
                     {%- set step = auto_planning_step_seconds | int(900) -%}
                     {%- set earliest = plan_earliest_ts | float -%}
                     {%- set primary = primary_start_time_value | trim -%}
@@ -1271,6 +1436,7 @@ actions:
                           {%- elif first <= last -%}
                             {%- for slot in range(0, (((last - first) / step) | round(0, 'floor') | int) + 1) -%}
                               {%- set ts = first + slot * step -%}
+                              {%- if dozwolony(ts) == 'True' -%}
                               {%- set fc = namespace(seen=false, rain=0, prob=0, temp=none, hum=none, wind=0, bad=false, conf=70, wet=false) -%}
                               {%- set rec = namespace(rain=0, bad=false, heavy=0) -%}
                               {%- set fut = namespace(seen=0, rain=0, prob=0, unsafe=false) -%}
@@ -1345,6 +1511,7 @@ actions:
                                   {%- set result.fb_source = 'best_effort' -%}
                                 {%- endif -%}
                               {%- endif -%}
+                              {%- endif -%}
                             {%- endfor -%}
                           {%- endif -%}
                           {%- if day.pref_ts > 0 -%}
@@ -1396,6 +1563,19 @@ actions:
                       {%- set result.ts = window.best if window.best > 0 else ((earliest / step) | round(0, 'ceil') | int) * step -%}
                       {%- set result.source = 'window' -%}
                       {%- set result.in_window = window.best > 0 -%}
+                    {%- endif -%}
+                    {%- if (allowed_days_enabled or daylight_only) and result.ts > 0 and dozwolony(result.ts) != 'True' -%}
+                      {%- set shift = namespace(ts=0) -%}
+                      {%- set base = ((result.ts / step) | round(0, 'ceil') | int) * step -%}
+                      {%- for k in range(1, 14 * 96 + 1) -%}
+                        {%- if shift.ts == 0 and dozwolony(base + k * step) == 'True' -%}
+                          {%- set shift.ts = base + k * step -%}
+                        {%- endif -%}
+                      {%- endfor -%}
+                      {%- if shift.ts > 0 -%}
+                        {%- set result.ts = shift.ts -%}
+                        {%- set result.in_window = false -%}
+                      {%- endif -%}
                     {%- endif -%}
                     {{ {'ts': result.ts, 'source': result.source, 'in_window': result.in_window, 'window_checked': result.window_checked} }}
               - variables:
@@ -1565,53 +1745,73 @@ actions:
                       - condition: template
                         value_template: "{{ plan_kind == 'daily' }}"
                     sequence:
+                      - variables:
+                          tytul: "Worx: plan koszenia"
+                          tresc: |-
+                            {{ plan_summary | trim }}
+                            {{ growth_line | trim }}, dziś przybyło {{ growth_daily_mm | float(0) | round(1) | string | replace('.', ',') }} mm.
                       - action: persistent_notification.create
                         data:
                           notification_id: "{{ notification_id }}"
-                          title: "Worx: plan koszenia"
-                          message: |-
-                            {{ plan_summary | trim }}
-                            {{ growth_line | trim }}, dziś przybyło {{ growth_daily_mm | float(0) | round(1) | string | replace('.', ',') }} mm.
+                          title: "{{ tytul }}"
+                          message: "{{ tresc }}"
+                      - if:
+                          - condition: template
+                            value_template: "{{ notify_daily_plan }}"
+                        then:
+                          - sequence: !input notify_actions
                   - conditions:
                       - condition: template
                         value_template: "{{ plan_kind == 'blocked' }}"
                     sequence:
-                      - action: persistent_notification.create
-                        data:
-                          notification_id: "{{ notification_id }}"
-                          title: "Worx: koszenie przełożone"
-                          message: |-
+                      - variables:
+                          tytul: "Worx: koszenie przełożone"
+                          tresc: |-
                             Nie rozpoczęto koszenia zaplanowanego na {{ plan_event.get('planned_label', '') }}.
                             Przyczyna: {{ plan_event.get('reason', '') }}.
 
                             {{ plan_summary | trim }}
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: "{{ notification_id }}"
+                          title: "{{ tytul }}"
+                          message: "{{ tresc }}"
+                      - sequence: !input notify_actions
                   - conditions:
                       - condition: template
                         value_template: "{{ plan_kind == 'interrupted' }}"
                     sequence:
-                      - action: persistent_notification.create
-                        data:
-                          notification_id: "{{ notification_id }}"
-                          title: "Worx: koszenie przerwane"
-                          message: |-
+                      - variables:
+                          tytul: "Worx: koszenie przerwane"
+                          tresc: |-
                             Koszenie rozpoczęte {{ plan_event.get('started_at', '') }} przerwano {{ plan_event.get('finished_at', '') }}.
                             Przyczyna: {{ plan_event.get('reason', '') }}.{% if (plan_event.get('growth_note', '') | length) > 0 %}
                             {{ plan_event.get('growth_note') }}{% endif %}
 
                             {{ plan_summary | trim }}
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: "{{ notification_id }}"
+                          title: "{{ tytul }}"
+                          message: "{{ tresc }}"
+                      - sequence: !input notify_actions
                   - conditions:
                       - condition: template
                         value_template: "{{ plan_kind in ['completed', 'manual_completed'] }}"
                     sequence:
-                      - action: persistent_notification.create
-                        data:
-                          notification_id: "{{ notification_id }}"
-                          title: >-
+                      - variables:
+                          tytul: >-
                             {{ 'Worx: koszenie ręczne zakończone' if plan_kind == 'manual_completed' else 'Worx: koszenie zakończone' }}
-                          message: |-
+                          tresc: |-
                             Koszenie trwało od {{ plan_event.get('started_at', '') }} do {{ plan_event.get('finished_at', '') }} ({{ plan_event.get('duration_label', '') }} razem z ładowaniem).
 
                             {{ plan_summary | trim }}
+                      - action: persistent_notification.create
+                        data:
+                          notification_id: "{{ notification_id }}"
+                          title: "{{ tytul }}"
+                          message: "{{ tresc }}"
+                      - sequence: !input notify_actions
       - alias: Przelicz przyrost i zaplanuj koszenie (bez prognozy)
         conditions:
           - condition: template
@@ -1764,13 +1964,17 @@ actions:
                   planned_label: "{{ planned_start_label | trim }}"
                   min_delay_minutes: 30
               - stop: Nie potwierdzono startu przycinania krawędzi po dwóch próbach.
+          - variables:
+              tytul: "Worx: koszenie rozpoczęte"
+              tresc: |-
+                Koszenie rozpoczęło się {{ mowing_cycle_started_at }}.
+                Najpierw robot przytnie krawędzie, potem naładuje baterię do {{ post_edge_battery_percent }}% i skosi cały trawnik.
           - action: persistent_notification.create
             data:
               notification_id: "{{ notification_id }}"
-              title: "Worx: koszenie rozpoczęte"
-              message: |-
-                Koszenie rozpoczęło się {{ mowing_cycle_started_at }}.
-                Najpierw robot przytnie krawędzie, potem naładuje baterię do {{ post_edge_battery_percent }}% i skosi cały trawnik.
+              title: "{{ tytul }}"
+              message: "{{ tresc }}"
+          - sequence: !input notify_actions
           - wait_template: >-
               {{ (states(rain_binary_sensor) not in ['unknown', 'unavailable', 'none', '']
                   and is_state(rain_binary_sensor, 'on'))
@@ -1780,7 +1984,8 @@ actions:
                        or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
                  or state_attr(mower_entity, 'rain_delay') == true
                  or is_state(mower_entity, 'docked')
-                 or (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60) }}
+                 or (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60)
+                 or (garden_check_enabled and garden_sensors | select('is_state', 'on') | list | length > 0) }}
             alias: Poczekaj na zakończenie krawędzi i powrót do bazy
             timeout: "02:00:00"
             continue_on_timeout: true
@@ -1811,6 +2016,28 @@ actions:
                 timeout: "00:02:00"
                 continue_on_timeout: true
           - choose:
+              - conditions:
+                  - condition: template
+                    alias: Ktoś wszedł do ogrodu podczas krawędzi
+                    value_template: "{{ (garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)) }}"
+                sequence:
+                  - if:
+                      - condition: template
+                        value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown', 'error'] }}"
+                    then:
+                      - action: lawn_mower.dock
+                        continue_on_error: true
+                        target:
+                          entity_id: !input mower_entity
+                  - event: worx_smart_mowing_replan
+                    event_data:
+                      mower_entity: "{{ mower_entity }}"
+                      kind: interrupted
+                      reason: ktoś wszedł do ogrodu podczas przycinania krawędzi
+                      started_at: "{{ mowing_cycle_started_at }}"
+                      finished_at: "{{ now().strftime('%d.%m o %H:%M') }}"
+                      min_delay_minutes: 30
+                  - stop: Ktoś wszedł do ogrodu podczas krawędzi.
               - conditions:
                   - condition: template
                     value_template: >-
@@ -1984,6 +2211,7 @@ actions:
                        and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
                             or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail'])) %}rain
                 {% elif (spread_after_edges | float(99)) < (min_dew_point_spread_c | float(2.5)) %}humidity
+                {% elif (garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)) %}garden
                 {% elif not is_state(mower_entity, 'docked')
                       or (states(battery_sensor) | float(0)) < (post_edge_battery_percent | float(80)) %}mower
                 {% else %}{{ '' }}{% endif %}
@@ -2004,6 +2232,8 @@ actions:
                   po krawędziach lokalny pomiar lub MeteoFusion HA wskazuje trwający opad
                 {% elif code == 'humidity' %}
                   po krawędziach powietrze jest tylko {{ spread_after_edges | float(0) | round(1) | string | replace('.', ',') }} °C cieplejsze od punktu rosy (wilgotność {{ humidity_after_edges | float | round(0) | int }}%), więc trawa jest jeszcze mokra
+                {% elif code == 'garden' %}
+                  ktoś jest w ogrodzie
                 {% elif code == 'mower' %}
                   przed zwykłym koszeniem robot nie jest w bazie albo bateria ma mniej niż {{ post_edge_battery_percent }}% (stan: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}, bateria {{ states(battery_sensor) }}%)
                 {% else %}
@@ -2012,7 +2242,7 @@ actions:
               post_edge_block_delay_minutes: >-
                 {% set code = post_edge_block_code | trim %}
                 {% set with_forecast = (forecast_available | string | lower) == 'true' and planning_mode == 'auto' %}
-                {{ {'sensor': 60, 'temperature': 30 if with_forecast else 60, 'rain_delay': 60, 'rain': 0, 'humidity': 60, 'mower': 30}.get(code, 30) }}
+                {{ {'sensor': 60, 'temperature': 30 if with_forecast else 60, 'rain_delay': 60, 'rain': 0, 'humidity': 60, 'garden': 30, 'mower': 30}.get(code, 30) }}
           - if:
               - condition: template
                 value_template: "{{ (post_edge_block_code | trim | length) > 0 }}"
@@ -2142,6 +2372,9 @@ actions:
                   finished_at: "{{ now().strftime('%d.%m o %H:%M') }}"
                   min_delay_minutes: 30
               - stop: Nie potwierdzono startu koszenia po dwóch próbach.
+          - variables:
+              aborted_by_error: false
+              aborted_error_text: ""
           - alias: Koszenie do powrotu robota albo limitu bezpieczeństwa
             repeat:
               while:
@@ -2165,9 +2398,33 @@ actions:
                        and state_attr(mower_entity, 'rain_delay') != true
                        and not completed
                        and not (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60)
+                       and not ((garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)))
+                       and not ((aborted_by_error | string | lower) == 'true' and is_state(mower_entity, 'docked'))
                        and repeat.index <= (normal_mowing_monitor_limit_minutes | int(720)) }}
               sequence:
-                - delay: "00:01:00"
+                - wait_for_trigger:
+                    - trigger: state
+                      entity_id: !input mower_entity
+                      to: error
+                  timeout: "00:01:00"
+                  continue_on_timeout: true
+                - if:
+                    - condition: template
+                      value_template: "{{ wait.trigger is not none }}"
+                  then:
+                    - variables:
+                        seen_error_text: >-
+                          {% set raw = wait.trigger.to_state.attributes.get('error_description', '') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}{{ (mower_error_names.get(raw | lower, raw) ~ ' (' ~ raw ~ ')') if raw else 'bez opisu' }}
+                    - wait_template: "{{ states(mower_entity) in ['mowing', 'returning', 'docked'] }}"
+                      timeout: "00:03:00"
+                      continue_on_timeout: true
+                    - if:
+                        - condition: template
+                          value_template: "{{ states(mower_entity) in ['returning', 'docked'] }}"
+                      then:
+                        - variables:
+                            aborted_by_error: true
+                            aborted_error_text: "{{ seen_error_text }}"
           - if:
               - condition: template
                 alias: Robot zgłosił błąd podczas koszenia
@@ -2192,6 +2449,40 @@ actions:
                   growth_note: Trawnik skoszono częściowo, więc szacowany przyrost trawy zmniejszono o 30%.
                   min_delay_minutes: 120
               - stop: Robot zgłosił błąd podczas koszenia.
+          - if:
+              - condition: template
+                alias: Ktoś wszedł do ogrodu podczas koszenia
+                value_template: "{{ (garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)) }}"
+            then:
+              - if:
+                  - condition: template
+                    value_template: "{{ states(mower_entity) not in ['docked', 'unavailable', 'unknown', 'error'] }}"
+                  - condition: template
+                    value_template: "{{ garden_reaction != 'pause' }}"
+                then:
+                  - action: lawn_mower.dock
+                    continue_on_error: true
+                    target:
+                      entity_id: !input mower_entity
+              - variables:
+                  reduced_growth_mm: "{{ ((states(growth_helper) | float(0)) * 0.7) | round(1) }}"
+              - action: input_number.set_value
+                alias: Zmniejsz przyrost po częściowym koszeniu
+                target:
+                  entity_id: !input growth_helper
+                data:
+                  value: "{{ reduced_growth_mm }}"
+              - event: worx_smart_mowing_replan
+                event_data:
+                  mower_entity: "{{ mower_entity }}"
+                  kind: interrupted
+                  reason: >-
+                    ktoś wszedł do ogrodu{{ ' - robot czeka na trawniku, wznów go ręcznie albo odeślij do bazy' if garden_reaction == 'pause' else '' }}
+                  started_at: "{{ mowing_cycle_started_at }}"
+                  finished_at: "{{ now().strftime('%d.%m o %H:%M') }}"
+                  growth_note: Trawnik skoszono częściowo, więc szacowany przyrost trawy zmniejszono o 30%.
+                  min_delay_minutes: 30
+              - stop: Ktoś wszedł do ogrodu podczas koszenia.
           - variables:
               normal_mowing_finished_ts: >-
                 {% if is_state(mower_entity, 'docked') %}
@@ -2272,7 +2563,8 @@ actions:
                         and ((state_attr(forecast_weather_entity | trim, 'rain_rate') | float(0)) > 0.05
                              or states(forecast_weather_entity | trim) in ['rainy', 'pouring', 'lightning-rainy', 'snowy-rainy', 'hail']))
                     or state_attr(mower_entity, 'rain_delay') == true %}
-                {{ not rain_now and (vision_complete if mower_cycle_type == 'vision_rtk' else is_state(mower_entity, 'docked')) }}
+                {{ not rain_now and (aborted_by_error | string | lower) != 'true'
+                   and (vision_complete if mower_cycle_type == 'vision_rtk' else is_state(mower_entity, 'docked')) }}
           - if:
               - condition: template
                 value_template: "{{ (mowing_completed | string | lower) == 'true' }}"
@@ -2311,11 +2603,34 @@ actions:
                   mower_entity: "{{ mower_entity }}"
                   kind: interrupted
                   reason: >-
-                    {{ 'deszcz podczas koszenia' if (rain_after_mowing | string | lower) == 'true' else 'robot nie potwierdził zakończenia koszenia i powrotu do bazy' }}
+                    {% if (rain_after_mowing | string | lower) == 'true' %}deszcz podczas koszenia
+                    {%- elif (aborted_by_error | string | lower) == 'true' %}robot przerwał koszenie po błędzie: {{ aborted_error_text }} i wrócił do bazy
+                    {%- else %}robot nie potwierdził zakończenia koszenia i powrotu do bazy{% endif %}
                   started_at: "{{ mowing_cycle_started_at }}"
                   finished_at: "{{ mowing_cycle_finished_at | trim }}"
                   growth_note: Trawnik skoszono częściowo, więc szacowany przyrost trawy zmniejszono o 30%.
-                  min_delay_minutes: "{{ 0 if (rain_after_mowing | string | lower) == 'true' else 30 }}"
+                  min_delay_minutes: >-
+                    {{ 0 if (rain_after_mowing | string | lower) == 'true' else (60 if (aborted_by_error | string | lower) == 'true' else 30) }}
+      - alias: Ktoś wszedł do ogrodu - zatrzymaj kosiarkę
+        conditions:
+          - condition: template
+            value_template: >-
+              {{ trigger.id == 'garden_entered' and garden_check_enabled
+                 and states(mower_entity) in ['mowing', 'returning'] }}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ garden_reaction == 'pause' and is_state(mower_entity, 'mowing') }}"
+            then:
+              - action: lawn_mower.pause
+                continue_on_error: true
+                target:
+                  entity_id: !input mower_entity
+            else:
+              - action: lawn_mower.dock
+                continue_on_error: true
+                target:
+                  entity_id: !input mower_entity
       - alias: Śledź koszenie uruchomione poza automatyzacją
         conditions:
           - condition: template
@@ -2331,6 +2646,9 @@ actions:
               manual_mow_started_ts: "{{ as_timestamp(trigger.to_state.last_changed) }}"
               manual_mow_started_at: >-
                 {{ as_timestamp(trigger.to_state.last_changed) | timestamp_custom('%d.%m o %H:%M', true) }}
+          - variables:
+              aborted_by_error: false
+              aborted_error_text: ""
           - alias: Monitoruj ręczne koszenie, łącznie z doładowaniem Vision / RTK
             repeat:
               while:
@@ -2347,9 +2665,33 @@ actions:
                         else is_state(mower_entity, 'docked') %}
                     {{ not completed
                        and not (is_state(mower_entity, 'error') and (as_timestamp(now()) - as_timestamp(states[mower_entity].last_changed)) >= (mower_fault_minutes | int(5)) * 60)
+                       and not ((garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)))
+                       and not ((aborted_by_error | string | lower) == 'true' and is_state(mower_entity, 'docked'))
                        and repeat.index <= (normal_mowing_monitor_limit_minutes | int(720)) }}
               sequence:
-                - delay: "00:01:00"
+                - wait_for_trigger:
+                    - trigger: state
+                      entity_id: !input mower_entity
+                      to: error
+                  timeout: "00:01:00"
+                  continue_on_timeout: true
+                - if:
+                    - condition: template
+                      value_template: "{{ wait.trigger is not none }}"
+                  then:
+                    - variables:
+                        seen_error_text: >-
+                          {% set raw = wait.trigger.to_state.attributes.get('error_description', '') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}{{ (mower_error_names.get(raw | lower, raw) ~ ' (' ~ raw ~ ')') if raw else 'bez opisu' }}
+                    - wait_template: "{{ states(mower_entity) in ['mowing', 'returning', 'docked'] }}"
+                      timeout: "00:03:00"
+                      continue_on_timeout: true
+                    - if:
+                        - condition: template
+                          value_template: "{{ states(mower_entity) in ['returning', 'docked'] }}"
+                      then:
+                        - variables:
+                            aborted_by_error: true
+                            aborted_error_text: "{{ seen_error_text }}"
           - variables:
               manual_mow_completed: >-
                 {% set mower_changed_ts = as_timestamp(states[mower_entity].last_changed) %}
@@ -2359,19 +2701,25 @@ actions:
                     and (states(battery_sensor) | float(0)) >= (vision_completion_battery_percent | float(95))
                     and state_attr(mower_entity, 'rain_delay') != true
                     and (as_timestamp(now()) - stable_since_ts) >= ((vision_completion_stable_minutes | int(15)) * 60) %}
-                {{ vision_complete if mower_cycle_type == 'vision_rtk' else is_state(mower_entity, 'docked') }}
+                {% set garden = (garden_check_enabled and garden_sensors | length > 0 and (garden_sensors | select('is_state', 'on') | list | length > 0 or garden_sensors | expand | selectattr('state', 'eq', 'off') | selectattr('last_changed', 'gt', now() - timedelta(minutes=5)) | list | length > 0)) %}
+                {{ not garden and (aborted_by_error | string | lower) != 'true'
+                   and (vision_complete if mower_cycle_type == 'vision_rtk' else is_state(mower_entity, 'docked')) }}
           - if:
               - condition: template
                 value_template: "{{ (manual_mow_completed | string | lower) != 'true' }}"
             then:
+              - variables:
+                  tytul: "Worx: koszenie ręczne przerwane"
+                  tresc: |-
+                    Koszenie uruchomione ręcznie {{ manual_mow_started_at | trim }} nie zakończyło się pełnym cyklem.
+                    {% if garden_check_enabled and garden_sensors | select('is_state', 'on') | list | length > 0 %}Przyczyna: ktoś jest w ogrodzie.{% elif (aborted_by_error | string | lower) == 'true' %}Przyczyna: robot przerwał koszenie po błędzie: {{ aborted_error_text }} i wrócił do bazy.{% elif is_state(mower_entity, 'error') %}Przyczyna: {% set raw = state_attr(mower_entity, 'error_description') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}robot zgłosił błąd{% if raw %}: {{ mower_error_names.get(raw | lower, raw) }} ({{ raw }}){% endif %}. Sprawdź robota na trawniku.{% else %}Stan robota: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}.{% endif %}
+                    Szacowany przyrost trawy pozostaje bez zmian: {{ states(growth_helper) | float(0) | round(1) | string | replace('.', ',') }} mm.
               - action: persistent_notification.create
                 data:
                   notification_id: "{{ notification_id }}"
-                  title: "Worx: koszenie ręczne przerwane"
-                  message: |-
-                    Koszenie uruchomione ręcznie {{ manual_mow_started_at | trim }} nie zakończyło się pełnym cyklem.
-                    {% if is_state(mower_entity, 'error') %}Przyczyna: {% set raw = state_attr(mower_entity, 'error_description') | default('', true) | string %}{% set raw = '' if raw | lower in ['no error', 'unknown', 'none'] else raw %}robot zgłosił błąd{% if raw %}: {{ mower_error_names.get(raw | lower, raw) }} ({{ raw }}){% endif %}. Sprawdź robota na trawniku.{% else %}Stan robota: {{ mower_state_names.get(states(mower_entity), states(mower_entity)) }}.{% endif %}
-                    Szacowany przyrost trawy pozostaje bez zmian: {{ states(growth_helper) | float(0) | round(1) | string | replace('.', ',') }} mm.
+                  title: "{{ tytul }}"
+                  message: "{{ tresc }}"
+              - sequence: !input notify_actions
               - stop: Ręczne koszenie nie zostało potwierdzone jako zakończone.
           - variables:
               manual_mow_finished_ts: "{{ as_timestamp(states[mower_entity].last_changed) }}"

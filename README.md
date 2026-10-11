@@ -35,6 +35,8 @@ https://github.com/SmartServicePL/worx_vision_cloud_plus_automation/blob/main/bl
 - Lets the user choose the mower cycle type: Vision / RTK self-finishing mowing or older wired Worx timed mowing.
 - Keeps three helpers updated: estimated grass growth, last full mowing, and next planned mowing.
 - Detects manual mowing started from the WORX app and resets the growth estimate only after the full mowing cycle is confirmed.
+- Treats a run that the mower aborts after a short error and a return to the dock as interrupted, not completed.
+- Optional, off by default: mowing only on selected weekdays, only in daylight (hedgehog protection), a pause when someone is in the garden, and your own phone notification actions.
 - Rechecks live measurements, Worx Cloud rain delay and the hourly forecast before normal mowing begins after the edge pass.
 
 ## Mowing Logic
@@ -76,7 +78,7 @@ blueprints/automation/worx_vision_cloud_plus/smart_mowing_schedule.yaml
 
 ## Requirements
 
-- Home Assistant 2025.1.0 or newer.
+- Home Assistant 2025.4.0 or newer.
 - Worx Vision Cloud PLUS integration `1.3.1` or newer installed from [`SmartServicePL/worx_vision_cloud_plus_github`](https://github.com/SmartServicePL/worx_vision_cloud_plus_github).
 - A `lawn_mower` entity for the mower.
 - The one-time mowing service from the Worx Vision Cloud PLUS integration.

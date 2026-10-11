@@ -91,6 +91,22 @@ The rain drying delay is taken into account only when measurable rain was record
 
 If the mower reports an error (for example `trapped timeout`, `lifted` or `wheel motor blocked`) for five minutes while the automation is running a cycle, the cycle is stopped right away, a notification names the error in plain language and the next attempt is planned no earlier than two hours later. A partially mowed lawn keeps 70% of its accumulated growth. Starts are also postponed while the mower remains in an error state.
 
+### Short faults that end the run
+
+Vision / RTK mowers sometimes report an error for only a second and then drive home, for example after losing the RTK signal (`insufficient sensor data`). The monitoring loops react to the mower entering `error` immediately. If the mower then returns to the dock instead of mowing on, the cycle is recorded as interrupted instead of completed: the growth estimate keeps 70%, the last-mow helper is not changed, the notification names the error and the next attempt is planned no earlier than one hour later. A short error after which the mower keeps mowing does not interrupt the cycle. The same applies to mowing started outside the automation.
+
+### Optional days, daylight and garden checks
+
+All of these are off by default, in the section **Opcje dodatkowe (domyślnie wyłączone)**:
+
+- **Kosić tylko w wybrane dni** - the planner chooses only the selected weekdays, and a start on another day is postponed.
+- **Kosić tylko za dnia** - mowing times must be between sunrise and sunset from `sun.sun`, with a margin (30 minutes by default). This also limits the FiatLux night window. Planned days use today's sunrise and sunset; the start is checked again with the current sun times.
+- **Nie kosić, gdy ktoś jest w ogrodzie** - when one of the selected sensors is `on`, the start is postponed by 30 minutes. If someone enters the garden during a cycle, the mower is sent to the dock (or paused) and the cycle is recorded as interrupted. A motion sensor still counts for five minutes after it turns off, because the cycle checks once a minute.
+
+### Phone notifications
+
+In **Powiadomienia na telefon (opcjonalnie)** you can add your own notification actions, for example `notify.mobile_app_phone` with `title: "{{ tytul }}"` and `message: "{{ tresc }}"`. They run together with the Home Assistant notification for start, postponement, interruption and completion. The daily plan is included only when **Wysyłaj także codzienny plan koszenia** is enabled.
+
 For the best local decisions, use your own weather station or local outdoor sensors for current temperature, accumulated rainfall, humidity and sunlight. Select **MeteoFusion HA** as the optional hourly `weather` entity when it is installed. The blueprint automatically consumes its `smart_service.weather.v1` context, including live rain rate, daily rainfall and forecast confidence. Standard Home Assistant weather providers, including Tomorrow.io, remain supported. Without a forecast entity the automation uses the configured mowing window and validates live conditions when the saved start time arrives.
 
 The drying delay is counted from the moment the selected rain sensor turned dry, and only when at least `0.2 mm` of rain was measured since midnight, so trace precipitation does not postpone mowing. It is 3 hours, or 6 hours when the measured rainfall exceeds the heavy-rain threshold, and it applies to the daily plan, to retries and to the start check.
